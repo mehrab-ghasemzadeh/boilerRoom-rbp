@@ -43,8 +43,8 @@ load_dotenv()
 
 _log = get_logger("auth")
 
-API_BASE_URL = os.environ.get("BOILERROOM_API_BASE_URL", "https://br.mayanext.com").rstrip("/")
-WS_BASE_URL = os.environ.get("BOILERROOM_WS_BASE_URL", "wss://br.mayanext.com").rstrip("/")
+API_BASE_URL = os.environ.get("BOILERROOM_API_BASE_URL", "https://rsesco.ir").rstrip("/")
+WS_BASE_URL = os.environ.get("BOILERROOM_WS_BASE_URL", "wss://rsesco.ir").rstrip("/")
 
 USERNAME_KEY = "BOILERROOM_DEVICE_USERNAME"
 PASSWORD_KEY = "BOILERROOM_DEVICE_PASSWORD"
