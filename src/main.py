@@ -107,11 +107,14 @@ if USE_MOCK_HARDWARE:
     # On the bench the control menu is answered from the keyboard, as it always
     # has been. BOILERROOM_KEYPAD_EMULATE=on restricts it to the keys the real
     # keypad has, to find prompts the device could not answer.
-    from mock_keypad import MockKeypad as Keypad
+    # from mock_keypad import MockKeypad as Keypad
     # And shown on a terminal, unless BOILERROOM_DISPLAY=mock asks for the
     # panel's own screens to be drawn in it — which is the only way to see
     # them without the hardware in front of you.
-    from mock_display import MockDisplay as Display
+    # from mock_display import MockDisplay as Display
+    from keypad import Keypad
+    # And shown on the ST7920 panel on the SPI header, beside the gas ADC.
+    from display import ST7920Display as Display
 else:
     from temperature_reader import TemperatureReader
     from gas_reader import GasReader
