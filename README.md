@@ -1357,26 +1357,64 @@ surprise the next time somebody opened it.
 On the installed hardware the menu is shown on an ST7920 128x64 graphical LCD,
 chosen by `USE_MOCK_HARDWARE` like everything else. Wiring:
 
-| ST7920 | Pi | |
+| ST7920 | Pi | physical |
 |---|---|---|
-| SID | GPIO10 | MOSI |
-| CLK | GPIO11 | SCLK |
-| CS | GPIO7 | CE1 |
+| SID | GPIO10 | 19 — MOSI |
+| CLK | GPIO11 | 23 — SCLK |
+| CS | GPIO8 | 24 — CE0, driven by hand |
+| PSB | GND, or GPIO6 | 31 |
 | VCC | 5V | |
 | GND | GND | |
 
-It shares the SPI bus with the gas ADC, which is on CE0. The chip selects are
-separate and the kernel serialises transfers, so the two do not need to know
-about each other — but they run at different clocks and in different SPI modes,
-so each opens its own handle.
+Four things about this controller are easy to get wrong and expensive to debug.
 
-Two things about this controller are easy to get wrong and expensive to debug.
-**PSB must be tied LOW** for serial mode; it is a jumper or a solder pad on the
-module rather than a pin on the five-wire connector, and left high the
-controller is listening for a parallel bus that is not there. And **CS is
-active high**, unlike every other SPI peripheral on the header — the driver
-sets `cshigh`, and `BOILERROOM_DISPLAY_CS_HIGH=off` is there for a panel whose
-chip select is strapped high in hardware instead.
+**CS is active high**, unlike every other SPI peripheral on the header. The
+kernel cannot drive a chip select that way, so the handle is opened with
+`no_cs` and `display.py` drives GPIO8 itself around each transfer. A panel that
+stays blank with good signal on SID and CLK is almost always this.
+
+**PSB must be LOW** for serial mode. On most modules it is a jumper or a solder
+pad rather than a pin on the connector; where it is wired to a GPIO instead,
+set `BOILERROOM_DISPLAY_PSB_PIN` and the driver holds it low — including after
+close, see below.
+
+**Mode 3**, clock idling high. Some clones want mode 0:
+`BOILERROOM_DISPLAY_SPI_MODE=0`.
+
+**There is no reset line.** Every run after the first opens onto a controller
+still exactly where the last one left it — extended instruction set, graphics
+on, RAM intact, and if the process was killed mid-transfer, part way through a
+frame. That is what used to leave the panel frozen on the previous run's last
+screen, needing a power cycle to clear. Three things now cover it: the receiver
+is flushed with zero bytes and a deliberate chip-select pattern before the first
+command, every function set is sent five times over, and the graphics RAM is
+wiped explicitly — `_CMD_CLEAR` only clears the *text* RAM, which is why the
+frozen frame used to survive it. `close()` also clears the panel and turns it
+off, so nothing stale outlives the process at all;
+`BOILERROOM_DISPLAY_CLEAR_ON_EXIT=off` keeps the last frame instead, which is
+what shows the "Agent stopped" screen to whoever walks up next.
+
+> **The gas ADC is on the same chip select.** It sits on SPI0 CE0 and expects
+> the kernel to drive it; the panel defaults to that same CE0 with the kernel's
+> chip select turned off. Both cannot own GPIO8. With both fitted, move the
+> panel to CE1 — `BOILERROOM_DISPLAY_SPI_DEVICE=1`,
+> `BOILERROOM_DISPLAY_CS_PIN=7` — and rewire CS to physical pin 26. The clash is
+> reported at startup and by `--test` below.
+
+#### Bring-up
+
+The panel is the one part of this device that cannot be checked from a log. With
+the agent stopped:
+
+```
+python src/display.py --test
+```
+
+It prints the configuration, brings the controller up and draws a border, a
+diagonal and two lines of text — a frame nothing else would produce by accident.
+`--mode0` and `--slow` (250 kHz) cover a clone that wants either; `--no-reset`
+skips the receiver flush, to see whether that is what is rescuing a restart;
+`--keep` leaves the frame up; `--selftest` flashes a checkerboard during init.
 
 #### What is on it
 
@@ -1480,7 +1518,7 @@ selects, Enter on its own is `#`.
 | `keypad.py` | GPIO matrix keypad: pin setup, scanning thread, bring-up test |
 | `keypad_layout.py` | Keypad pins, key table, caps and line editor — no hardware imports |
 | `screen.py` | The display's screens: lists, pages, entry, legend strip |
-| `display.py` | ST7920 128x64 LCD over SPI: init, dirty-row refresh |
+| `display.py` | ST7920 128x64 LCD over SPI: init, restart recovery, dirty-row refresh, `--test` |
 | `display_canvas.py` | 128x64 framebuffer, drawing and text wrapping — no hardware imports |
 | `display_font.py` | The 5x7 bitmap font — no hardware imports |
 | `mapping.py`, `mapping_*.py`, `config.py` | Device mapping load, validation, lookup |
@@ -1528,16 +1566,11 @@ Outstanding:
   read a logic high and the Pi drives 3.3 V; it usually works, and running the
   panel's VCC at 3.3 V is the usual fix if it does not.
 
-  The panel has no reset line here, so a restart of the agent hands the next
-  run a controller that was never power cycled: still in the extended
-  instruction set, still holding its graphics RAM, and — if the process was
-  killed mid-refresh — still waiting for the rest of a frame. `_open` drives
-  PSB low, resyncs the serial receiver with a run of zero bytes and sends the
-  function set twice to cover all three. `close()` leaves the pins claimed and
-  driven LOW for the same reason: releasing PSB lets the module's pull-up take
-  it high, which is parallel mode, and the pin configuration outlives the
-  process that set it. If a panel is already stuck this way it needs one power
-  cycle to come back — after that, restarts are enough.
+  The restart fault is fixed and documented under "The display" above: the
+  controller is never reset, so every run but the first inherits its state. Run
+  `python src/display.py --test` on the device before blaming the agent — it
+  drives the panel on its own, with no menu, mapping or event loop involved.
+
 - **No gas threshold logic.** Gas readings are logged and transmitted, but no
   threshold drives the `alarm` relay or `gas_valve`.
 - **A changed mapping needs a restart.** Relay GPIO pins are configured once at

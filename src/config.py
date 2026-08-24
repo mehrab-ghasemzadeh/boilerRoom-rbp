@@ -20,15 +20,21 @@ SPI_SPEED = 1_000_000
 # BCM pins the gas ADC occupies: MOSI, SCLK, CE0.
 SPI_GPIO = (10, 11, 8)
 
-# ST7920 128x64 graphical display. Same SPI bus as the gas ADC, its own chip
-# select — the kernel serialises the two, and each opens its own handle because
-# they run at different clocks and in different SPI modes.
+# ST7920 128x64 graphical display. The controller wants an active-HIGH chip
+# select, which the kernel cannot drive, so the handle is opened with no_cs and
+# display.py drives CS itself.
+#
+# That puts it in direct conflict with the gas ADC below, which is on this same
+# CE0 and expects the kernel to drive it. One of the two has to move: put the
+# panel on CE1 with BOILERROOM_DISPLAY_SPI_DEVICE=1 and _CS_PIN=7 if both are
+# fitted. display.describe() reports the clash.
 DISPLAY_SPI_BUS = 0
-DISPLAY_SPI_DEVICE = 1  # CE1
-DISPLAY_SPI_SPEED = 800_000
+DISPLAY_SPI_DEVICE = 0  # CE0, with the kernel's chip select disabled
+DISPLAY_SPI_SPEED = 500_000
+DISPLAY_SPI_MODE = 0b11  # clock idles high, sampled on the rising edge
 
-# BCM pins the panel occupies: SID -> MOSI, CLK -> SCLK, CS -> CE1.
-DISPLAY_GPIO = (10, 11, 7)
+# BCM pins the panel occupies: SID -> MOSI, CLK -> SCLK, CS -> CE0 by hand.
+DISPLAY_GPIO = (10, 11, 8)
 
 # Populated by load_device_mapping() at startup
 UNITS: dict[str, dict[str, str]] = {}

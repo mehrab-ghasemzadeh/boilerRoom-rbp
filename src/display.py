@@ -1,333 +1,93 @@
-# """
-# ST7920 128x64 graphical LCD, driven over SPI.
-
-# Wiring (BCM numbering)::
-
-#     ST7920      Pi
-#     SID    ->   GPIO10  MOSI
-#     CLK    ->   GPIO11  SCLK
-#     CS     ->   GPIO7   CE1
-#     VCC    ->   5V
-#     GND    ->   GND
-
-# The panel shares the SPI bus with the gas ADC, which sits on CE0. Chip selects
-# are separate and the kernel serialises transfers, so the two do not need to
-# know about each other — but they do run at different clocks and in different
-# SPI modes, which is why each opens its own ``SpiDev`` handle rather than
-# sharing one.
-
-# Two things about this controller are easy to get wrong and expensive to debug:
-
-# * **CS is active HIGH.** Every other SPI peripheral on the header asserts chip
-#   select low; the ST7920 asserts it high. ``spidev`` can be told this, and is,
-#   below. A panel that stays blank with a perfectly good signal on SID and CLK
-#   is almost always this.
-# * **PSB must be tied LOW** for serial mode. It is a jumper or a solder pad on
-#   the module — not a pin on the five-wire connector — and with it left high the
-#   controller is listening for a parallel bus that is not there.
-
-# Refreshes send only the rows that changed. A full frame is 64 rows of 16 bytes,
-# which becomes about 2.5 KB once each byte is split into the two padded nibbles
-# the serial protocol wants — 25 ms of bus time at 800 kHz, on a core that also
-# has boilers to run. Moving the selection down a menu changes two rows, so it
-# costs about a millisecond.
-
-# Every SPI call blocks, so each one goes through ``asyncio.to_thread`` like the
-# rest of the hardware here.
-# """
-
-# from __future__ import annotations
-
-# import asyncio
-# import os
-# import time
-
-# import spidev
-
-# from config import DISPLAY_SPI_BUS, DISPLAY_SPI_DEVICE, DISPLAY_SPI_SPEED
-# from display_canvas import BYTES_PER_ROW, HEIGHT, WIDTH, Canvas
-
-# # Sync bytes that open a serial transfer: bit pattern 11111, then RW and RS.
-# _SYNC_COMMAND = 0xF8
-# _SYNC_DATA = 0xFA
-
-# # Basic instruction set
-# _CMD_FUNCTION_BASIC = 0x30
-# _CMD_DISPLAY_ON = 0x0C
-# _CMD_CLEAR = 0x01
-# _CMD_ENTRY_MODE = 0x06
-
-# # Extended instruction set: graphics off, then graphics on.
-# _CMD_FUNCTION_EXTENDED = 0x34
-# _CMD_GRAPHICS_ON = 0x36
-
-# # The controller needs 1.6 ms to clear its text RAM, and about 72 us for the
-# # rest. Only the init sequence waits — the graphics writes below are paced by
-# # the bus itself.
-# _CLEAR_DELAY = 0.002
-# _COMMAND_DELAY = 0.0001
-
-
-# def _env_int(name: str, default: int) -> int:
-#     raw = (os.environ.get(name) or "").strip()
-#     if not raw:
-#         return default
-#     try:
-#         return int(raw)
-#     except ValueError:
-#         return default
-
-
-# def _env_flag(name: str, default: bool) -> bool:
-#     raw = (os.environ.get(name) or "").strip().lower()
-#     if not raw:
-#         return default
-#     return raw in ("on", "1", "true", "yes")
-
-
-# class DisplayError(RuntimeError):
-#     """Raised when the panel cannot be brought up."""
-
-
-# class ST7920Display:
-#     """The 128x64 panel on the SPI header."""
-
-#     name = "ST7920 128x64 LCD"
-#     width = WIDTH
-#     height = HEIGHT
-#     available = True
-
-#     def __init__(
-#         self,
-#         bus: int | None = None,
-#         device: int | None = None,
-#         speed_hz: int | None = None,
-#     ):
-#         self.bus = _env_int("BOILERROOM_DISPLAY_SPI_BUS", DISPLAY_SPI_BUS) if bus is None else bus
-#         self.device = (
-#             _env_int("BOILERROOM_DISPLAY_SPI_DEVICE", DISPLAY_SPI_DEVICE)
-#             if device is None
-#             else device
-#         )
-#         self.speed_hz = (
-#             _env_int("BOILERROOM_DISPLAY_SPI_SPEED", DISPLAY_SPI_SPEED)
-#             if speed_hz is None
-#             else speed_hz
-#         )
-#         self.cs_high = _env_flag("BOILERROOM_DISPLAY_CS_HIGH", True)
-
-#         self._spi: spidev.SpiDev | None = None
-#         # The last frame actually on the glass, so a refresh can send only what
-#         # moved. None forces the next flush to send everything.
-#         self._previous: bytearray | None = None
-
-#     # -- lifecycle -----------------------------------------------------------
-
-#     async def start(self) -> None:
-#         try:
-#             await asyncio.to_thread(self._open)
-#         except Exception as exc:
-#             raise DisplayError(
-#                 f"could not open SPI {self.bus}.{self.device} for the display: {exc}"
-#             ) from exc
-
-#     def _open(self) -> None:
-#         spi = spidev.SpiDev()
-#         spi.open(self.bus, self.device)
-#         spi.max_speed_hz = self.speed_hz
-#         # Idle-low clock, sampled on the rising edge.
-#         spi.mode = 0b00
-
-#         if self.cs_high:
-#             # The ST7920 asserts chip select high, unlike everything else on
-#             # this header. Some kernels refuse the flag after open(); the panel
-#             # can still be driven with CS strapped high in hardware, so this is
-#             # not worth failing over.
-#             try:
-#                 spi.cshigh = True
-#             except Exception:
-#                 pass
-
-#         self._spi = spi
-#         self._previous = None
-#         self._initialise()
-
-#     def _initialise(self) -> None:
-#         time.sleep(0.05)  # the controller's own power-on settling time
-#         self._command(_CMD_FUNCTION_BASIC)
-#         self._command(_CMD_DISPLAY_ON)
-#         self._command(_CMD_CLEAR)
-#         time.sleep(_CLEAR_DELAY)
-#         self._command(_CMD_ENTRY_MODE)
-#         self._command(_CMD_FUNCTION_EXTENDED)
-#         self._command(_CMD_GRAPHICS_ON)
-#         self._blank()
-
-#     async def close(self) -> None:
-#         if self._spi is None:
-#             return
-#         await asyncio.to_thread(self._close_sync)
-
-#     def _close_sync(self) -> None:
-#         """
-#         Release the bus, leaving the last frame on the glass.
-
-#         An unpowered panel holds whatever it was last sent, and the menu draws
-#         a screen saying the agent has stopped before it gets here — which is
-#         worth more to whoever walks up to it than a blank display.
-#         """
-#         spi = self._spi
-#         self._spi = None
-#         if spi is None:
-#             return
-#         try:
-#             spi.close()
-#         except Exception:
-#             pass
-
-#     # -- serial protocol -----------------------------------------------------
-#     #
-#     # Each byte goes out as two bytes: the high nibble padded with zeros, then
-#     # the low nibble padded the same way. A burst of data needs only one sync
-#     # byte at the front, which is what makes a row of graphics RAM affordable.
-
-#     def _command(self, value: int) -> None:
-#         spi = self._spi
-#         if spi is None:
-#             return
-#         spi.writebytes([_SYNC_COMMAND, value & 0xF0, (value << 4) & 0xF0])
-#         time.sleep(_COMMAND_DELAY)
-
-#     def _data(self, payload: bytes) -> None:
-#         spi = self._spi
-#         if spi is None:
-#             return
-#         message = [_SYNC_DATA]
-#         for byte in payload:
-#             message.append(byte & 0xF0)
-#             message.append((byte << 4) & 0xF0)
-#         spi.writebytes(message)
-
-#     def _set_address(self, row: int) -> None:
-#         """
-#         Point the controller at one 128-pixel row of graphics RAM.
-
-#         The address is a vertical 0-31 and a horizontal word 0-15. The lower
-#         half of the panel is not addressed as rows 32-63: it is the same 32
-#         vertical addresses, at horizontal words 8-15.
-#         """
-#         self._command(0x80 | (row & 0x1F))
-#         self._command(0x80 | (0 if row < 32 else 8))
-
-#     def _blank(self) -> None:
-#         empty = bytes(BYTES_PER_ROW)
-#         for row in range(HEIGHT):
-#             self._set_address(row)
-#             self._data(empty)
-#         self._previous = bytearray(BYTES_PER_ROW * HEIGHT)
-
-#     # -- drawing -------------------------------------------------------------
-
-#     async def show(self, canvas: Canvas) -> int:
-#         """Push a frame. Returns how many rows had to be sent."""
-#         if self._spi is None:
-#             return 0
-#         return await asyncio.to_thread(self._flush, canvas.snapshot())
-
-#     def _flush(self, frame: bytes) -> int:
-#         previous = self._previous
-#         sent = 0
-
-#         for row in range(HEIGHT):
-#             start = row * BYTES_PER_ROW
-#             end = start + BYTES_PER_ROW
-#             chunk = frame[start:end]
-#             if previous is not None and previous[start:end] == chunk:
-#                 continue
-#             self._set_address(row)
-#             self._data(chunk)
-#             sent += 1
-
-#         self._previous = bytearray(frame)
-#         return sent
-
-#     async def clear(self) -> None:
-#         if self._spi is None:
-#             return
-#         await asyncio.to_thread(self._blank)
-
-#     def describe(self) -> list[str]:
-#         return [
-#             f"Display: {self.name} on SPI {self.bus}.{self.device} "
-#             f"at {self.speed_hz / 1000:.0f} kHz"
-#             + (", CS active high" if self.cs_high else "")
-#         ]
-
-
 """
-ST7920 128x64 graphical LCD, driven through GPIO bit-banged serial mode.
+ST7920 128x64 graphical LCD, driven over hardware SPI.
 
-Wiring (BCM numbering):
+Wiring (BCM numbering, physical pin in brackets)::
 
-    ST7920      Raspberry Pi
-    --------------------------------
-    PSB     ->  GPIO6      (held LOW: serial mode)
-    SID     ->  GPIO24     (serial data)
-    CLK     ->  GPIO19     (serial clock)
-    CS      ->  GPIO23     (chip select / enable)
+    ST7920      Pi
+    SID    ->   GPIO10  MOSI    [19]
+    CLK    ->   GPIO11  SCLK    [23]
+    CS     ->   GPIO8   CE0     [24]   driven by hand, not by the kernel
+    PSB    ->   GND, or GPIO6   [31]   LOW selects serial mode
+    VCC    ->   5V
+    GND    ->   GND
 
-    VCC     ->  Physical 5V power pin
-    GND     ->  Physical GND pin
+Do not power the panel from a GPIO pin or ground it through one. Use the
+header's own 5V and GND.
 
-IMPORTANT:
-    Do not power the LCD from GPIO2 or ground it through GPIO9.
-    Use the Raspberry Pi's actual physical 5V and GND pins.
+Four things about this controller are easy to get wrong and expensive to debug:
 
-The ST7920 is operated in serial mode by holding PSB LOW.
+* **CS is active HIGH.** Every other SPI peripheral on the header asserts chip
+  select low; the ST7920 asserts it high. The kernel cannot drive it that way,
+  so the handle is opened with ``no_cs`` and CS is driven as an ordinary GPIO
+  around each transfer. A panel that stays blank with good signal on SID and
+  CLK is almost always this.
+* **PSB must be LOW** for serial mode. On most modules it is a jumper or solder
+  pad rather than a pin on the connector; where it is wired to a GPIO instead,
+  set ``BOILERROOM_DISPLAY_PSB_PIN`` and this drives it -- and goes on holding
+  it after close, see ``_close_sync``.
+* **Mode 3.** Clock idles high, sampled on the rising edge. Some clones want
+  mode 0; ``BOILERROOM_DISPLAY_SPI_MODE`` switches.
+* **The controller is never reset.** There is no RST line here, so every run
+  after the first one opens onto a controller that is still exactly where the
+  last run left it: extended instruction set, graphics on, its RAM intact, and
+  -- if the process was killed mid-transfer -- part way through a frame. This
+  is what used to leave the panel frozen on the previous run's last screen.
+  ``_bus_reset`` and the repeated function sets in ``_initialise`` exist for
+  that alone, and everything here is written to be safe to run twice.
 
-This implementation replaces hardware SPI/spidev with GPIO bit-banging,
-while preserving the original asynchronous API and differential row refresh.
+**Chip select and the gas ADC.** The ADC in ``gas_reader`` sits on SPI0 CE0 and
+lets the kernel drive its chip select; this panel defaults to the same CE0 with
+the kernel's chip select disabled, because that is the wiring the bring-up
+sample was proven on. Both cannot have GPIO8 at once. If the two are on one
+bus, move the panel to CE1 -- ``BOILERROOM_DISPLAY_SPI_DEVICE=1`` and
+``BOILERROOM_DISPLAY_CS_PIN=7`` -- and rewire CS to physical pin 26.
+``describe()`` says so out loud when it sees the clash.
 
-Every blocking display operation runs through asyncio.to_thread() so the
-asyncio event loop is not blocked.
+Refreshes send only the rows that changed. Every SPI call blocks, so each one
+goes through ``asyncio.to_thread`` like the rest of the hardware here.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import sys
 import threading
 import time
 
+import spidev
+
 import RPi.GPIO as GPIO
 
+from config import (
+    DISPLAY_SPI_BUS,
+    DISPLAY_SPI_DEVICE,
+    DISPLAY_SPI_MODE,
+    DISPLAY_SPI_SPEED,
+)
 from display_canvas import BYTES_PER_ROW, HEIGHT, WIDTH, Canvas
 
 
 # ============================================================================
-# GPIO MAPPING
+# DEFAULTS
 # ============================================================================
 
-# ST7920 PSB: LOW = serial mode
-PSB_PIN = 6
+# Chip select, driven as a plain GPIO because the ST7920 wants it active high.
+DISPLAY_CS_GPIO = 8
 
-# ST7920 serial interface
-SID_PIN = 24
-CLK_PIN = 19
-CS_PIN = 23
+# Serial-mode select. None means the module ties PSB low itself, which is the
+# usual arrangement -- there is nothing to drive and nothing to hold.
+DISPLAY_PSB_GPIO = 6
 
 
 # ============================================================================
 # ST7920 SERIAL PROTOCOL
 # ============================================================================
 
-# Sync bytes:
+# Sync bytes: 11111, then RW and RS.
 #
-# 11111 RW RS 0
-#
-# Command: RW=0, RS=0
-# Data:    RW=0, RS=1
-
+#   command: RW=0 RS=0
+#   data:    RW=0 RS=1
 _SYNC_COMMAND = 0xF8
 _SYNC_DATA = 0xFA
 
@@ -339,10 +99,12 @@ _SYNC_DATA = 0xFA
 # Basic instruction set
 _CMD_FUNCTION_BASIC = 0x30
 _CMD_DISPLAY_ON = 0x0C
+_CMD_DISPLAY_OFF = 0x08
 _CMD_CLEAR = 0x01
 _CMD_ENTRY_MODE = 0x06
+_CMD_RETURN_HOME = 0x02
 
-# Extended instruction set
+# Extended instruction set: graphics off, then graphics on.
 _CMD_FUNCTION_EXTENDED = 0x34
 _CMD_GRAPHICS_ON = 0x36
 
@@ -351,23 +113,31 @@ _CMD_GRAPHICS_ON = 0x36
 # TIMING
 # ============================================================================
 
-# Controller power-on settling time
-_POWER_ON_DELAY = 0.05
+# Controller settling time before the first instruction.
+_POWER_ON_DELAY = 0.1
 
-# Clear command execution time
-_CLEAR_DELAY = 0.002
+# After a function set. The controller needs longer to change instruction sets
+# than it does for an ordinary command, and this is the one place where being
+# impatient costs the whole session.
+_FUNCTION_SET_DELAY = 0.01
 
-# Normal command execution time
-_COMMAND_DELAY = 0.0001
+# Display Clear is the slowest instruction there is: 1.6 ms on paper, and clone
+# controllers have been seen to want more.
+_CLEAR_DELAY = 0.005
 
-# Settling time after PSB changes level. The panel is only guaranteed to be
-# listening on the serial lines once it has seen PSB LOW for a moment, and PSB
-# may well have been HIGH until _open ran -- see _close_sync.
-_MODE_SETTLE = 0.01
+# After an ordinary command.
+_COMMAND_DELAY = 0.001
 
-# Zero bytes sent to flush a half-received frame out of the controller before
-# talking to it. A frame is three bytes, so three finishes the longest possible
-# remainder; the fourth is slack.
+# Between rows of a forced clear, which is the one loop that runs against a
+# controller in an unknown state.
+_ROW_DELAY = 0.001
+
+# How many times to repeat a function set before believing it. A controller
+# that is mid-frame will eat the first one or two as data.
+_FUNCTION_SET_REPEATS = 5
+
+# Zero bytes clocked out to flush a half-received frame. A frame is three
+# bytes, so three finishes the longest possible remainder; the fourth is slack.
 _RESYNC_BYTES = 4
 
 
@@ -375,38 +145,82 @@ _RESYNC_BYTES = 4
 # ENVIRONMENT HELPERS
 # ============================================================================
 
+
 def _env_int(name: str, default: int) -> int:
     """Read an integer environment variable safely."""
+
     raw = (os.environ.get(name) or "").strip()
 
     if not raw:
         return default
 
     try:
-        return int(raw)
+        return int(raw, 0)
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    """Read a float environment variable safely."""
+
+    raw = (os.environ.get(name) or "").strip()
+
+    if not raw:
+        return default
+
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    """Read an on/off environment variable safely."""
+
+    raw = (os.environ.get(name) or "").strip().lower()
+
+    if not raw:
+        return default
+
+    if raw in ("on", "1", "true", "yes"):
+        return True
+
+    if raw in ("off", "0", "false", "no"):
+        return False
+
+    return default
+
+
+def _env_pin(name: str, default: int | None) -> int | None:
+    """
+    Read a pin number, or None where the board wires it for us.
+
+    ``none`` is spelled out rather than left blank, so that an empty variable
+    still means "unset, use the default" like everywhere else here.
+    """
+
+    raw = (os.environ.get(name) or "").strip().lower()
+
+    if not raw:
+        return default
+
+    if raw in ("none", "off", "-", "unused"):
+        return None
+
+    try:
+        return int(raw, 0)
     except ValueError:
         return default
 
 
 class DisplayError(RuntimeError):
-    """Raised when the ST7920 panel cannot be initialized."""
+    """Raised when the panel cannot be brought up."""
 
 
 class ST7920Display:
-    """
-    Driver for a 128x64 ST7920 graphical LCD.
+    """The 128x64 panel on the SPI header."""
 
-    The public API is intentionally compatible with the previous SPI version:
-
-        await display.start()
-        await display.show(canvas)
-        await display.clear()
-        await display.close()
-
-    The driver uses GPIO bit-banging instead of spidev.
-    """
-
-    name = "ST7920 128x64 LCD (GPIO Serial)"
+    name = "ST7920 128x64 LCD"
 
     width = WIDTH
     height = HEIGHT
@@ -415,80 +229,97 @@ class ST7920Display:
 
     def __init__(
         self,
-        psb_pin: int | None = None,
-        sid_pin: int | None = None,
-        clk_pin: int | None = None,
+        bus: int | None = None,
+        device: int | None = None,
+        speed_hz: int | None = None,
+        mode: int | None = None,
         cs_pin: int | None = None,
+        psb_pin: int | None = None,
     ):
         """
         Create the display driver.
 
-        Pins can be overridden through constructor arguments or environment
-        variables.
+        Everything is overridable from the constructor or the environment:
 
-        Environment variables:
-
-            BOILERROOM_DISPLAY_PSB_PIN
-            BOILERROOM_DISPLAY_SID_PIN
-            BOILERROOM_DISPLAY_CLK_PIN
+            BOILERROOM_DISPLAY_SPI_BUS
+            BOILERROOM_DISPLAY_SPI_DEVICE
+            BOILERROOM_DISPLAY_SPI_SPEED
+            BOILERROOM_DISPLAY_SPI_MODE
             BOILERROOM_DISPLAY_CS_PIN
+            BOILERROOM_DISPLAY_PSB_PIN      a pin, or "none"
+            BOILERROOM_DISPLAY_CLEAR_ON_EXIT
+            BOILERROOM_DISPLAY_SELFTEST
+            BOILERROOM_DISPLAY_COMMAND_DELAY
+            BOILERROOM_DISPLAY_DATA_DELAY
         """
 
-        self.psb_pin = (
-            _env_int(
-                "BOILERROOM_DISPLAY_PSB_PIN",
-                PSB_PIN,
-            )
-            if psb_pin is None
-            else psb_pin
+        self.bus = (
+            _env_int("BOILERROOM_DISPLAY_SPI_BUS", DISPLAY_SPI_BUS)
+            if bus is None
+            else bus
         )
 
-        self.sid_pin = (
-            _env_int(
-                "BOILERROOM_DISPLAY_SID_PIN",
-                SID_PIN,
-            )
-            if sid_pin is None
-            else sid_pin
+        self.device = (
+            _env_int("BOILERROOM_DISPLAY_SPI_DEVICE", DISPLAY_SPI_DEVICE)
+            if device is None
+            else device
         )
 
-        self.clk_pin = (
-            _env_int(
-                "BOILERROOM_DISPLAY_CLK_PIN",
-                CLK_PIN,
-            )
-            if clk_pin is None
-            else clk_pin
+        self.speed_hz = (
+            _env_int("BOILERROOM_DISPLAY_SPI_SPEED", DISPLAY_SPI_SPEED)
+            if speed_hz is None
+            else speed_hz
+        )
+
+        self.mode = (
+            _env_int("BOILERROOM_DISPLAY_SPI_MODE", DISPLAY_SPI_MODE)
+            if mode is None
+            else mode
         )
 
         self.cs_pin = (
-            _env_int(
-                "BOILERROOM_DISPLAY_CS_PIN",
-                CS_PIN,
-            )
+            _env_int("BOILERROOM_DISPLAY_CS_PIN", DISPLAY_CS_GPIO)
             if cs_pin is None
             else cs_pin
         )
 
+        self.psb_pin = (
+            _env_pin("BOILERROOM_DISPLAY_PSB_PIN", DISPLAY_PSB_GPIO)
+            if psb_pin is None
+            else psb_pin
+        )
+
+        # Clearing on the way out is what stops a stale frame outliving the
+        # process that drew it. Turn it off to leave the last screen up -- the
+        # menu draws one saying the agent has stopped, which is worth more to
+        # somebody walking up to the panel than a blank rectangle.
+        self.clear_on_exit = _env_flag("BOILERROOM_DISPLAY_CLEAR_ON_EXIT", True)
+
+        # A checkerboard written and immediately erased at the end of init.
+        # Off by default: this link is write-only, so it cannot report back
+        # whether the panel took it, and all it costs a working device is a
+        # visible flash on every start.
+        self.selftest = _env_flag("BOILERROOM_DISPLAY_SELFTEST", False)
+
+        self.command_delay = _env_float(
+            "BOILERROOM_DISPLAY_COMMAND_DELAY", _COMMAND_DELAY
+        )
+
+        self.data_delay = _env_float("BOILERROOM_DISPLAY_DATA_DELAY", 0.0)
+
+        self._spi: spidev.SpiDev | None = None
+
         self._started = False
 
-        # Stores the last frame actually sent to the LCD.
-        #
-        # None means that the next refresh must send the entire frame.
+        # The last frame actually on the glass, so a refresh can send only what
+        # moved. None forces the next flush to send everything.
         self._previous: bytearray | None = None
 
-        # Delay between GPIO transitions.
-        #
-        # Python GPIO bit-banging is much slower than hardware SPI, so this
-        # defaults to zero. The GPIO calls themselves provide sufficient delay
-        # for the ST7920 on a Raspberry Pi.
-        self._bit_delay = 0.0
-
-        # Held across every transfer, and across open and close. Two threads
-        # on this bus at once would interleave their bits; a close landing in
-        # the middle of a refresh would drop CS half way through a byte. Both
-        # leave the controller holding an incomplete frame, which is a fault
-        # that outlives the process -- see _resync.
+        # Held across every transfer, and across open and close. Two threads on
+        # this bus at once would interleave their bytes, and a close landing in
+        # the middle of a refresh would drop CS half way through a frame. Both
+        # leave the controller holding an incomplete frame, and that is a fault
+        # which outlives the process -- see _bus_reset.
         #
         # Reentrant because _open holds it while _initialise calls _blank.
         self._bus_lock = threading.RLock()
@@ -498,79 +329,68 @@ class ST7920Display:
     # ========================================================================
 
     async def start(self) -> None:
-        """
-        Initialize GPIO and the ST7920 controller.
-        """
+        """Claim the bus and bring the controller up."""
 
         try:
             await asyncio.to_thread(self._open)
 
         except Exception as exc:
             raise DisplayError(
-                f"could not initialize ST7920 display GPIO interface: {exc}"
+                f"could not open SPI {self.bus}.{self.device} "
+                f"for the display: {exc}"
             ) from exc
 
     def _open(self) -> None:
         """
-        Configure the Raspberry Pi GPIO pins and initialize the LCD.
+        Claim the pins and the SPI handle, then initialize the controller.
 
-        Nothing here may assume a freshly powered controller. There is no reset
-        line on this panel, the GPIO pin configuration outlives the process
-        that set it, and the ST7920 keeps both its mode and its graphics RAM
-        across a restart of the agent. A second run therefore opens onto a
-        controller that is still in the extended instruction set with graphics
-        on, and possibly still waiting for the rest of a frame the previous run
-        was interrupted half way through.
+        Nothing here may assume a freshly powered panel. The GPIO configuration
+        outlives the process that set it, and the controller keeps its mode,
+        its instruction set and its RAM across a restart of the agent.
         """
 
         GPIO.setwarnings(False)
         GPIO.setmode(GPIO.BCM)
 
         with self._bus_lock:
-            # PSB LOW -> serial mode. First of the four, and given a settling
-            # delay below: if this pin was left floating the module's own
-            # pull-up has had it HIGH, and a controller in parallel mode
+            # PSB first, and held: if this pin was left floating, the module's
+            # own pull-up has had it HIGH, and a controller in parallel mode
             # ignores the serial lines completely.
-            GPIO.setup(
-                self.psb_pin,
-                GPIO.OUT,
-                initial=GPIO.LOW,
-            )
+            if self.psb_pin is not None:
+                GPIO.setup(self.psb_pin, GPIO.OUT, initial=GPIO.LOW)
 
-            # Chip select, deasserted.
-            #
-            # ST7920 serial interface is active HIGH, so LOW is deselected --
-            # and taking it LOW is what resets the controller's serial
-            # receiver.
-            GPIO.setup(
-                self.cs_pin,
-                GPIO.OUT,
-                initial=GPIO.LOW,
-            )
+            # Chip select, deasserted. Active HIGH on this controller, so LOW
+            # is deselected.
+            GPIO.setup(self.cs_pin, GPIO.OUT, initial=GPIO.LOW)
 
-            # Serial data
-            GPIO.setup(
-                self.sid_pin,
-                GPIO.OUT,
-                initial=GPIO.LOW,
-            )
+            spi = spidev.SpiDev()
+            spi.open(self.bus, self.device)
+            spi.max_speed_hz = self.speed_hz
+            spi.mode = self.mode
+            # The kernel's chip select is active low and cannot be inverted, so
+            # it is left out of it entirely and CS is driven above.
+            spi.no_cs = True
 
-            # Serial clock
-            GPIO.setup(
-                self.clk_pin,
-                GPIO.OUT,
-                initial=GPIO.LOW,
-            )
-
-            time.sleep(_MODE_SETTLE)
-
+            self._spi = spi
             self._previous = None
             self._started = True
 
-            self._resync()
-            self._initialise()
+            try:
+                self._bus_reset()
+                self._initialise()
 
-    def _resync(self) -> None:
+            except Exception:
+                self._started = False
+                self._spi = None
+
+                try:
+                    spi.close()
+                except Exception:
+                    pass
+
+                raise
+
+    def _bus_reset(self) -> None:
         """
         Put the controller's serial receiver back in step.
 
@@ -578,8 +398,7 @@ class ST7920Display:
         one value. Stop the agent part way through one -- Ctrl-C during a
         refresh, or SIGTERM from systemd -- and the controller is left holding
         an incomplete frame, waiting for the bits that would finish it. It has
-        no timeout; it waits across the shutdown, across the pins going quiet,
-        and into the next process.
+        no timeout; it waits across the shutdown and into the next process.
 
         Everything the next run sends then lands one frame behind. Its sync
         bytes are swallowed as the tail of the stale frame, its commands are
@@ -587,32 +406,125 @@ class ST7920Display:
         goes on showing the last frame of the previous run, which is
         indistinguishable from a hung device.
 
-        Zero bytes are what finish it. A sync byte is five consecutive 1 bits,
-        so zeros can never begin a frame; they can only complete a stale one,
-        which is then discarded as an instruction the controller does not have.
-        Deselecting afterwards clears the receiver whatever state it ended in.
+        Two things fix that. Zero bytes finish the stale frame: a sync byte is
+        five consecutive 1 bits, so zeros can never begin one, only complete
+        one, which is then discarded as an instruction that does not exist.
+        And deselecting clears the receiver whatever state it ended in, which
+        is what the deliberate CS pattern below is for.
         """
 
-        self._end_transfer()
-        time.sleep(_COMMAND_DELAY)
+        spi = self._spi
 
-        self._begin_transfer()
+        if spi is None:
+            return
 
-        try:
-            for _ in range(_RESYNC_BYTES):
-                self._write_byte(0x00)
+        GPIO.output(self.cs_pin, GPIO.LOW)
+        time.sleep(0.05)
 
-        finally:
-            self._end_transfer()
+        # Selected, with nothing but zeros: finishes a partial frame.
+        GPIO.output(self.cs_pin, GPIO.HIGH)
+        time.sleep(0.05)
+        spi.xfer2([0x00] * _RESYNC_BYTES)
 
-        time.sleep(_COMMAND_DELAY)
+        GPIO.output(self.cs_pin, GPIO.LOW)
+        time.sleep(0.05)
+
+        # And once more, so a controller that came up mid-instruction sees a
+        # clean select/deselect edge before the first real command.
+        GPIO.output(self.cs_pin, GPIO.HIGH)
+        time.sleep(0.05)
+
+        GPIO.output(self.cs_pin, GPIO.LOW)
+        time.sleep(0.05)
+
+    def _initialise(self) -> None:
+        """
+        Bring the controller to basic mode, then graphics, then blank it.
+
+        Written to be safe on a controller that was never power cycled: on a
+        restart it is still where the previous run left it, in the extended
+        instruction set with graphics on. Each function set is therefore sent
+        several times over. The first one is what a listening controller acts
+        on; the rest cost a few milliseconds and cover the case where it was
+        not listening yet.
+        """
+
+        time.sleep(_POWER_ON_DELAY)
+
+        # Basic instruction set.
+        for _ in range(_FUNCTION_SET_REPEATS):
+            self._command(_CMD_FUNCTION_BASIC)
+            time.sleep(_FUNCTION_SET_DELAY)
+
+        # Clear the text RAM. This does *not* touch the graphics RAM, which is
+        # why the frozen frame survived it -- see _force_clear_graphics.
+        self._command(_CMD_CLEAR)
+        time.sleep(_CLEAR_DELAY)
+
+        self._command(_CMD_DISPLAY_ON)
+        self._command(_CMD_ENTRY_MODE)
+        self._command(_CMD_RETURN_HOME)
+
+        # Extended instruction set, then graphics on, then wipe what the last
+        # run left in the graphics RAM.
+        self._force_clear_graphics()
+
+        # Whatever was on the glass is gone, so nothing may be assumed about
+        # what a differential refresh can skip.
+        self._previous = bytearray(BYTES_PER_ROW * HEIGHT)
+
+        if self.selftest:
+            self._self_test()
+
+    def _force_clear_graphics(self) -> None:
+        """
+        Write zeros to every graphics address, from an unknown starting state.
+
+        Unlike ``_blank`` this re-asserts the instruction set and the graphics
+        bit first, several times each, rather than trusting that ``_initialise``
+        got there. It is the one operation that has to work on a controller
+        which may still be ignoring us.
+        """
+
+        for _ in range(_FUNCTION_SET_REPEATS):
+            self._command(_CMD_FUNCTION_EXTENDED)
+            time.sleep(_FUNCTION_SET_DELAY)
+
+        for _ in range(_FUNCTION_SET_REPEATS):
+            self._command(_CMD_GRAPHICS_ON)
+            time.sleep(_FUNCTION_SET_DELAY)
+
+        empty = bytes(BYTES_PER_ROW)
+
+        for row in range(HEIGHT):
+            self._set_address(row)
+            self._data(empty)
+            time.sleep(_ROW_DELAY)
+
+        self._previous = bytearray(BYTES_PER_ROW * HEIGHT)
+
+    def _self_test(self) -> None:
+        """
+        Write a checkerboard to the top row and erase it again.
+
+        Proves nothing on its own -- this link is write-only -- but it is
+        visible, so on a panel that shows the flash and nothing else the fault
+        is above this driver rather than in it.
+        """
+
+        pattern = bytes(
+            0x55 if index % 2 == 0 else 0xAA for index in range(BYTES_PER_ROW)
+        )
+
+        self._set_address(0)
+        self._data(pattern)
+        time.sleep(0.05)
+
+        self._set_address(0)
+        self._data(bytes(BYTES_PER_ROW))
 
     async def close(self) -> None:
-        """
-        Stop driving the panel, leaving the last frame on the glass.
-
-        The pins stay claimed rather than being released -- see _close_sync.
-        """
+        """Stop driving the panel and release the SPI handle."""
 
         if not self._started:
             return
@@ -621,239 +533,120 @@ class ST7920Display:
 
     def _close_sync(self) -> None:
         """
-        Leave the bus quiet, with the controller still in serial mode.
+        Clear the glass, then let the bus go.
 
-        We deliberately do not clear the LCD before closing: the last frame
-        stays on the glass rather than the panel going dark.
+        Clearing is the point: a frame left in the graphics RAM outlives the
+        process, and the controller is not reset when the next one starts, so
+        whatever is on the panel at exit is what an operator sees until
+        something overwrites it. Leaving the agent's last screen up looks like
+        a running device.
 
-        The pins are held as outputs driven LOW rather than returned to inputs.
-        GPIO configuration survives this process, and a released PSB is taken
-        HIGH by the pull-up on the module -- which puts the controller into
-        parallel mode, where the next run's serial traffic is ignored and the
-        panel sits frozen on this frame until somebody power cycles it. Held
-        LOW, it is still in serial mode when the next run opens it.
-
-        CS goes first: deselecting is what ends a transfer cleanly and resets
-        the controller's serial receiver.
+        The pins stay claimed, and PSB stays driven LOW. GPIO configuration
+        survives this process, and a released PSB is taken HIGH by the pull-up
+        on the module -- which puts the controller into parallel mode, where
+        the next run's traffic is ignored entirely.
         """
 
         with self._bus_lock:
+            spi = self._spi
+
             try:
-                GPIO.output(
-                    self.cs_pin,
-                    GPIO.LOW,
-                )
+                if spi is not None and self.clear_on_exit:
+                    self._blank_locked()
+                    time.sleep(0.01)
 
-                GPIO.output(
-                    self.clk_pin,
-                    GPIO.LOW,
-                )
+                    self._command(_CMD_FUNCTION_BASIC)
+                    self._command(_CMD_DISPLAY_OFF)
 
-                GPIO.output(
-                    self.sid_pin,
-                    GPIO.LOW,
-                )
+            except Exception:
+                pass  # a panel we cannot talk to is not worth failing shutdown
 
-                GPIO.output(
-                    self.psb_pin,
-                    GPIO.LOW,
-                )
+            self._spi = None
+            self._started = False
+            self._previous = None
+
+            try:
+                GPIO.output(self.cs_pin, GPIO.LOW)
+
+                if self.psb_pin is not None:
+                    GPIO.output(self.psb_pin, GPIO.LOW)
 
             except Exception:
                 pass
 
-            self._started = False
-            self._previous = None
+            if spi is not None:
+                try:
+                    spi.close()
+                except Exception:
+                    pass
 
     # ========================================================================
-    # INITIALIZATION
+    # SPI TRANSPORT
     # ========================================================================
 
-    def _initialise(self) -> None:
+    def _transfer(self, payload: list[int]) -> None:
         """
-        Initialize the ST7920 and enable graphics mode.
+        One selected transfer: assert CS, send, deassert.
 
-        Written to be safe on a controller that was never power cycled. On a
-        restart it is still where the previous run left it -- extended
-        instruction set, graphics on -- so the function set that takes it back
-        to the basic instructions is sent twice: the first is what a listening
-        controller acts on, and the second covers the case where the first was
-        spent finishing something stale.
+        Deasserting every time is deliberate. It is slower than holding CS
+        across a whole row, and it is what makes the controller's receiver
+        self-correcting: a byte lost to a signal-integrity problem costs one
+        value rather than every value after it.
         """
 
-        # Allow controller power to stabilize.
-        time.sleep(_POWER_ON_DELAY)
+        spi = self._spi
 
-        # Basic instruction mode. Twice, deliberately -- see the docstring.
-        self._command(_CMD_FUNCTION_BASIC)
-        self._command(_CMD_FUNCTION_BASIC)
+        if spi is None:
+            return
 
-        # Display ON.
-        self._command(_CMD_DISPLAY_ON)
+        GPIO.output(self.cs_pin, GPIO.HIGH)
 
-        # Clear controller memory.
-        self._command(_CMD_CLEAR)
+        try:
+            spi.xfer2(payload)
 
-        time.sleep(_CLEAR_DELAY)
+        finally:
+            GPIO.output(self.cs_pin, GPIO.LOW)
 
-        # Entry mode.
-        self._command(_CMD_ENTRY_MODE)
-
-        # Extended instruction set.
-        self._command(_CMD_FUNCTION_EXTENDED)
-
-        # Enable graphics mode.
-        self._command(_CMD_GRAPHICS_ON)
-
-        # Clear the graphics display. The controller keeps its graphics RAM
-        # across a restart, so without this the previous run's frame stays
-        # under everything drawn from here.
-        self._blank()
-
-    # ========================================================================
-    # GPIO SERIAL TRANSPORT
-    # ========================================================================
-
-    def _delay(self) -> None:
-        """Optional delay between GPIO transitions."""
-
-        if self._bit_delay > 0:
-            time.sleep(self._bit_delay)
-
-    def _begin_transfer(self) -> None:
+    def _command(self, value: int) -> None:
         """
-        Select the ST7920.
+        Send one command.
 
-        The ST7920 serial chip select is active HIGH.
-        """
-
-        GPIO.output(
-            self.cs_pin,
-            GPIO.HIGH,
-        )
-
-        self._delay()
-
-    def _end_transfer(self) -> None:
-        """Deselect the ST7920."""
-
-        GPIO.output(
-            self.cs_pin,
-            GPIO.LOW,
-        )
-
-        self._delay()
-
-    def _write_byte(self, value: int) -> None:
-        """
-        Write one byte MSB first through GPIO.
-
-        Clock mode is equivalent to SPI mode 0:
-
-            CLK idle = LOW
-            data sampled on rising edge
+        Three bytes: the sync byte, the high nibble padded, the low nibble
+        padded.
         """
 
         value &= 0xFF
 
-        for bit in range(7, -1, -1):
+        self._transfer(
+            [
+                _SYNC_COMMAND,
+                value & 0xF0,
+                (value << 4) & 0xF0,
+            ]
+        )
 
-            bit_value = (
-                GPIO.HIGH
-                if value & (1 << bit)
-                else GPIO.LOW
-            )
-
-            # Set data while clock is LOW.
-            GPIO.output(
-                self.sid_pin,
-                bit_value,
-            )
-
-            self._delay()
-
-            # Rising edge.
-            GPIO.output(
-                self.clk_pin,
-                GPIO.HIGH,
-            )
-
-            self._delay()
-
-            # Return clock to idle LOW.
-            GPIO.output(
-                self.clk_pin,
-                GPIO.LOW,
-            )
-
-            self._delay()
-
-    def _write_bytes(self, values: list[int]) -> None:
-        """
-        Send multiple bytes in one ST7920 serial transfer.
-        """
-
-        self._begin_transfer()
-
-        try:
-            for value in values:
-                self._write_byte(value)
-
-        finally:
-            self._end_transfer()
-
-    # ========================================================================
-    # ST7920 SERIAL PROTOCOL
-    # ========================================================================
-
-    def _command(self, value: int) -> None:
-        """
-        Send one ST7920 command.
-
-        ST7920 serial format:
-
-            F8
-            command high nibble << 4
-            command low nibble << 4
-        """
-
-        if not self._started:
-            return
-
-        message = [
-            _SYNC_COMMAND,
-            value & 0xF0,
-            (value << 4) & 0xF0,
-        ]
-
-        self._write_bytes(message)
-
-        time.sleep(_COMMAND_DELAY)
+        if self.command_delay > 0:
+            time.sleep(self.command_delay)
 
     def _data(self, payload: bytes) -> None:
         """
-        Send graphics data.
+        Send graphics data, one byte per transfer.
 
-        One data sync byte is sent followed by every payload byte split into
-        two padded nibbles.
+        The controller's address counter advances on its own as the bytes
+        arrive, so a row does not have to be sent inside a single chip select.
         """
 
-        if not self._started:
-            return
-
-        message = [_SYNC_DATA]
-
         for byte in payload:
-
-            message.append(
-                byte & 0xF0
+            self._transfer(
+                [
+                    _SYNC_DATA,
+                    byte & 0xF0,
+                    (byte << 4) & 0xF0,
+                ]
             )
 
-            message.append(
-                (byte << 4) & 0xF0
-            )
-
-        self._write_bytes(message)
+            if self.data_delay > 0:
+                time.sleep(self.data_delay)
 
     # ========================================================================
     # GRAPHICS RAM ADDRESSING
@@ -861,39 +654,23 @@ class ST7920Display:
 
     def _set_address(self, row: int) -> None:
         """
-        Point the ST7920 at one logical 128-pixel graphics row.
+        Point the controller at one logical 128-pixel graphics row.
 
-        Rows 0-31:
-            vertical address = row
-            horizontal word = 0
-
-        Rows 32-63:
-            vertical address = row - 32
-            horizontal word = 8
+        Rows 0-31 are vertical address ``row`` at horizontal word 0; rows 32-63
+        are vertical address ``row - 32`` at horizontal word 8. The panel is
+        two 128x32 halves side by side internally, which is why the bottom half
+        is addressed as a horizontal offset rather than a vertical one.
         """
 
-        # Vertical address.
-        self._command(
-            0x80 | (row & 0x1F)
-        )
-
-        # Horizontal word.
-        self._command(
-            0x80 | (
-                0
-                if row < 32
-                else 8
-            )
-        )
+        self._command(0x80 | (row & 0x1F))
+        self._command(0x80 | (0 if row < 32 else 8))
 
     # ========================================================================
-    # FULL SCREEN CLEAR
+    # DRAWING
     # ========================================================================
 
     def _blank(self) -> None:
-        """
-        Clear all 64 graphics rows.
-        """
+        """Clear all 64 graphics rows."""
 
         with self._bus_lock:
             self._blank_locked()
@@ -901,35 +678,20 @@ class ST7920Display:
     def _blank_locked(self) -> None:
         """Clear every row. The caller holds the bus."""
 
-        empty = bytes(
-            BYTES_PER_ROW
-        )
+        empty = bytes(BYTES_PER_ROW)
 
         for row in range(HEIGHT):
-
             self._set_address(row)
-
             self._data(empty)
 
-        self._previous = bytearray(
-            BYTES_PER_ROW * HEIGHT
-        )
+        self._previous = bytearray(BYTES_PER_ROW * HEIGHT)
 
-    # ========================================================================
-    # DRAWING / DIFFERENTIAL REFRESH
-    # ========================================================================
-
-    async def show(
-        self,
-        canvas: Canvas,
-    ) -> int:
+    async def show(self, canvas: Canvas) -> int:
         """
-        Push a Canvas frame to the LCD.
+        Push a Canvas frame to the panel.
 
-        Only rows that differ from the previous frame are transmitted.
-
-        Returns:
-            Number of rows sent.
+        Only rows that differ from the previous frame are transmitted. Returns
+        the number of rows sent.
         """
 
         if not self._started:
@@ -937,22 +699,16 @@ class ST7920Display:
 
         frame = canvas.snapshot()
 
-        return await asyncio.to_thread(
-            self._flush,
-            frame,
-        )
+        return await asyncio.to_thread(self._flush, frame)
 
-    def _flush(
-        self,
-        frame: bytes,
-    ) -> int:
+    def _flush(self, frame: bytes) -> int:
         """
-        Compare the frame with the previous frame and send only changed rows.
+        Send the rows that changed.
 
-        Serialised against everything else on the bus. A refresh interrupted
-        part way through a byte -- by a close, or by another thread starting
-        its own transfer -- leaves the controller waiting for the rest of a
-        frame that never arrives, and it stays out of step from then on.
+        Serialised against everything else on the bus: a refresh interrupted
+        part way through -- by a close, or by another thread starting its own
+        transfer -- leaves the controller waiting for the rest of a frame that
+        never arrives.
         """
 
         with self._bus_lock:
@@ -961,75 +717,186 @@ class ST7920Display:
 
             return self._flush_locked(frame)
 
-    def _flush_locked(
-        self,
-        frame: bytes,
-    ) -> int:
-        """Send the rows that changed. The caller holds the bus."""
+    def _flush_locked(self, frame: bytes) -> int:
+        """Compare against the previous frame and send the difference."""
 
         previous = self._previous
 
         sent = 0
 
         for row in range(HEIGHT):
-
-            start = (
-                row * BYTES_PER_ROW
-            )
-
-            end = (
-                start + BYTES_PER_ROW
-            )
+            start = row * BYTES_PER_ROW
+            end = start + BYTES_PER_ROW
 
             chunk = frame[start:end]
 
-            # Skip rows that have not changed.
-            if (
-                previous is not None
-                and previous[start:end] == chunk
-            ):
+            if previous is not None and previous[start:end] == chunk:
                 continue
 
             self._set_address(row)
-
             self._data(chunk)
 
             sent += 1
 
-        # Store a copy of the frame actually transmitted.
-        self._previous = bytearray(
-            frame
-        )
+        self._previous = bytearray(frame)
 
         return sent
 
     async def clear(self) -> None:
-        """
-        Clear the entire graphics display.
-        """
+        """Clear the entire graphics display."""
 
         if not self._started:
             return
 
-        await asyncio.to_thread(
-            self._blank
-        )
+        await asyncio.to_thread(self._blank)
 
     # ========================================================================
-    # STATUS / DEBUG
+    # STATUS
     # ========================================================================
+
+    def conflicts(self) -> dict[int, str]:
+        """
+        Pins or buses this panel wants that something else already drives.
+
+        The gas ADC is the one that matters. It sits on SPI0 CE0 and lets the
+        kernel drive its chip select; this panel drives CS itself. Two owners
+        of one chip select is not a configuration that half works -- it is a
+        panel that goes blank the first time the ADC is read.
+        """
+
+        from config import SPI_BUS, SPI_DEVICE, SPI_GPIO
+
+        clashes: dict[int, str] = {}
+
+        if self.bus == SPI_BUS and self.device == SPI_DEVICE:
+            clashes[self.cs_pin] = (
+                f"SPI {SPI_BUS}.{SPI_DEVICE}, which the gas ADC also opens"
+            )
+
+        elif self.cs_pin in SPI_GPIO:
+            clashes[self.cs_pin] = "a pin the gas ADC's SPI bus uses"
+
+        if self.psb_pin is not None and self.psb_pin in SPI_GPIO:
+            clashes[self.psb_pin] = "a pin the gas ADC's SPI bus uses"
+
+        return clashes
 
     def describe(self) -> list[str]:
-        """
-        Return a human-readable description of the display configuration.
-        """
+        """Human-readable configuration, for the log and the bring-up mode."""
 
-        return [
+        psb = (
+            f"PSB=GPIO{self.psb_pin} held LOW"
+            if self.psb_pin is not None
+            else "PSB tied LOW on the module"
+        )
+
+        lines = [
             f"Display: {self.name}",
             (
-                f"PSB=GPIO{self.psb_pin} LOW, "
-                f"SID=GPIO{self.sid_pin}, "
-                f"CLK=GPIO{self.clk_pin}, "
-                f"CS=GPIO{self.cs_pin} active high"
+                f"SPI {self.bus}.{self.device} at {self.speed_hz} Hz, "
+                f"mode {self.mode}, CS=GPIO{self.cs_pin} active high "
+                f"(kernel CS off)"
             ),
+            f"{psb}; clear on exit: {'yes' if self.clear_on_exit else 'no'}",
         ]
+
+        for pin, what in sorted(self.conflicts().items()):
+            lines.append(f"WARNING: GPIO {pin} is also {what}")
+
+        return lines
+
+
+# ---------------------------------------------------------------------------
+# Bring-up
+# ---------------------------------------------------------------------------
+#
+# The panel is the one part of this device that cannot be checked from a log:
+# it either has the right picture on it or it does not, and nobody can tell you
+# which from the other end of a WebSocket. Run this standing in front of it,
+# with the agent stopped:
+#
+#     python src/display.py --test
+#
+# It draws a frame nothing else would produce by accident, so a partly working
+# panel can be told from a working one. Each switch isolates one thing that has
+# been wrong before:
+#
+#     --mode0        SPI mode 0 instead of 3, for a clone that wants it
+#     --slow         250 kHz, for a panel showing torn or partial rows
+#     --no-reset     skip the receiver flush, to see whether that is what is
+#                    rescuing a restart
+#     --keep         leave the frame up instead of clearing on the way out
+#     --selftest     flash a checkerboard on the top row during init
+
+
+def _test_canvas(label: str) -> Canvas:
+    """A frame that is obviously this one and not a leftover."""
+
+    canvas = Canvas()
+    canvas.rect(0, 0, WIDTH, HEIGHT)
+    canvas.text(6, 6, "ST7920 bring-up")
+    canvas.text(6, 18, label)
+    canvas.hline(4, 30, WIDTH - 8)
+
+    for x in range(6, WIDTH - 6):
+        canvas.pixel(x, 34 + (x - 6) * 22 // (WIDTH - 12))
+
+    canvas.text(6, 54, "border line text")
+
+    return canvas
+
+
+async def _test_mode(argv: list[str]) -> None:
+    display = ST7920Display(
+        mode=0 if "--mode0" in argv else None,
+        speed_hz=250_000 if "--slow" in argv else None,
+    )
+
+    if "--keep" in argv:
+        display.clear_on_exit = False
+
+    if "--selftest" in argv:
+        display.selftest = True
+
+    if "--no-reset" in argv:
+        display._bus_reset = lambda: None  # noqa: SLF001 -- this is the owner
+        print("  receiver flush disabled")
+
+    for line in display.describe():
+        print("  " + line)
+
+    print("  opening the panel ...")
+    await display.start()
+    print("  init sent, graphics mode on, graphics RAM cleared")
+
+    rows = await display.show(_test_canvas(time.strftime("run at %H:%M:%S")))
+    print("  drew a test frame (%d row(s) sent)" % rows)
+    print()
+    print("  Blank now means nothing reached the controller: check PSB is LOW,")
+    print("  that CS is on the pin named above, and the 5V logic-high margin.")
+    print("  Garbled or torn rows mean the bus is too fast -- try --slow, or")
+    print("  --mode0 if the panel is a clone.")
+    print()
+
+    input("  Press Enter to finish ...")
+
+    await display.close()
+
+    print(
+        "  closed; "
+        + ("frame left on the glass" if "--keep" in argv else "panel cleared")
+    )
+
+
+if __name__ == "__main__":
+    if "--test" not in sys.argv:
+        print(
+            "Usage: python src/display.py --test "
+            "[--mode0] [--slow] [--no-reset] [--keep] [--selftest]"
+        )
+        raise SystemExit(2)
+
+    try:
+        asyncio.run(_test_mode(sys.argv))
+    except KeyboardInterrupt:
+        print()
