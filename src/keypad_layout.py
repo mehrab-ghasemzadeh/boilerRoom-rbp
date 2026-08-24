@@ -70,13 +70,21 @@ from logging_setup import get_logger
 
 _log = get_logger("keypad")
 
-# Connector pin -> BCM GPIO. Chosen to avoid the relay pins (18, 23, 24, 25,
-# 12, 16, 20, 21), the 1-Wire bus (4) and the SPI pins the gas ADC uses.
-# DEFAULT_ROW_GPIO = (17, 27, 22, 5)  # connector A, B, C, D
-# DEFAULT_COL_GPIO = (6, 13, 19, 26)  # connector 1, 2, 3, 4
-
-DEFAULT_ROW_GPIO = (11, 13, 15, 219)  # connector A, B, C, D
-DEFAULT_COL_GPIO = (31, 33, 35, 37)  # connector 1, 2, 3, 4
+# Connector pin -> BCM GPIO.
+#
+# BCM, not the physical pin numbers printed on a header diagram: keypad.py sets
+# GPIO.setmode(GPIO.BCM), so a board number here is either a different pin or,
+# above 27, not a pin at all -- and then the keypad refuses to start, the menu
+# falls back to a keyboard that the installed device does not have, and the
+# panel sits on whatever frame it drew first. The physical pin is in the
+# comment so both are on the record.
+#
+# Chosen to avoid the 1-Wire bus (4) and the SPI pins the gas ADC and the
+# display use (8, 10, 11). They can still clash with a relay, because relay
+# wiring comes from the server and changes under a device that was correct when
+# it was installed -- Keypad.conflicting_pins checks for that at startup.
+DEFAULT_ROW_GPIO = (17, 27, 22, 5)  # connector A, B, C, D -- pins 11 13 15 29
+DEFAULT_COL_GPIO = (6, 13, 19, 26)  # connector 1, 2, 3, 4 -- pins 31 33 35 37
 
 
 
@@ -153,6 +161,10 @@ class KeypadLayoutError(ValueError):
 def _pins_from_env(name: str, default: tuple[int, ...]) -> tuple[int, ...]:
     raw = (os.environ.get(name) or "").strip()
     if not raw:
+        # Checked too: the defaults are edited by hand more often than the
+        # environment is, and that is exactly where this went wrong before.
+        for pin in default:
+            check(pin, name)
         return default
 
     pins: list[int] = []
@@ -170,7 +182,53 @@ def _pins_from_env(name: str, default: tuple[int, ...]) -> tuple[int, ...]:
         raise KeypadLayoutError(f"{name}: expected 4 pins, got {len(pins)}")
     if len(set(pins)) != 4:
         raise KeypadLayoutError(f"{name}: the same pin is listed twice — {pins}")
+
+    for pin in pins:
+        check(pin, name)
+
     return tuple(pins)
+
+
+# The header exposes BCM 0-27. Everything above that is a physical pin number
+# somebody has read off a header diagram -- 31, 33, 35 and 37 are the four that
+# a 4x4 pad wired down the right-hand edge naturally produces, and they are not
+# GPIO numbers at all.
+MAX_BCM_GPIO = 27
+
+# Physical pin -> BCM, for the range where the mistake is silent rather than
+# out of range. Only the pins a keypad is plausibly wired to.
+_BOARD_TO_BCM = {
+    11: 17, 12: 18, 13: 27, 15: 22, 16: 23, 18: 24, 19: 10, 21: 9,
+    22: 25, 23: 11, 24: 8, 26: 7, 29: 5, 31: 6, 32: 12, 33: 13,
+    35: 19, 36: 16, 37: 26, 38: 20, 40: 21,
+}
+
+
+def check(pin: int, name: str = "pin") -> None:
+    """
+    Reject a physical pin number given where a BCM one belongs.
+
+    keypad.py scans in BCM mode. A board number is either a different pin
+    entirely or, past 27, not a pin -- and the failure is a keypad that will
+    not start, a menu that falls back to a keyboard the installed device does
+    not have, and a panel frozen on its first frame. Worth catching by name.
+    """
+
+    if 0 <= pin <= MAX_BCM_GPIO:
+        return
+
+    hint = _BOARD_TO_BCM.get(pin)
+
+    if hint is not None:
+        raise KeypadLayoutError(
+            f"{name}: {pin} is not a BCM pin. It is physical pin {pin}, "
+            f"which is BCM {hint} — these are BCM numbers"
+        )
+
+    raise KeypadLayoutError(
+        f"{name}: {pin} is not a BCM pin (the header has 0-{MAX_BCM_GPIO}); "
+        "these are BCM numbers, not physical pin numbers"
+    )
 
 
 def row_pins() -> tuple[int, ...]:

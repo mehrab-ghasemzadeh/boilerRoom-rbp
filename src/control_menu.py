@@ -74,6 +74,7 @@ from device_record import (
     save_cached_device_record,
 )
 from display_font import DEGREE
+from display_canvas import wrap
 from keypad_layout import CANCEL, ENTER, cap_for
 from mapping_provider import DEFAULT_MAPPING_PATH, DEFAULT_SOURCE
 from limits_guard import limit_guard
@@ -1572,8 +1573,10 @@ async def _start_input_device(state: RuntimeState):
 
     try:
         await device.start()
+        state.keypad_error = None
         return device
     except Exception as exc:
+        state.keypad_error = str(exc)
         await state.log(
             f"[menu] The {device.name} could not be started: {exc}",
             level=logging.ERROR,
@@ -2039,6 +2042,43 @@ async def _credential_outcome(state: RuntimeState) -> str:
 # ---------------------------------------------------------------------------
 
 
+# How long the panel holds the notice below before the menu takes over. Long
+# enough to read twenty characters twice, short enough not to delay a device
+# that somebody is standing in front of.
+FALLBACK_NOTICE_SECONDS = 8.0
+
+
+async def _report_input_fallback(state: RuntimeState, view: Screen | None) -> None:
+    """
+    Put a keypad that would not start on the glass.
+
+    Otherwise this failure is silent where it matters most. The agent logs it
+    and carries on with the keyboard, which the installed device does not have
+    -- so the panel draws one frame and then waits forever for a key from a
+    terminal that is not there. From in front of the device that is
+    indistinguishable from a frozen display, and the log saying otherwise is on
+    a machine nobody is looking at.
+    """
+
+    reason = getattr(state, "keypad_error", None)
+
+    if not reason or view is None:
+        return
+
+    lines = ["Keypad did not start.", "The menu needs the", "console keyboard:"]
+    lines.extend(wrap(reason, 21)[:3])
+
+    await view.splash("Keypad", lines)
+
+    try:
+        await asyncio.wait_for(
+            state.shutdown.wait(),
+            timeout=FALLBACK_NOTICE_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        pass
+
+
 async def run_control_menu(state: RuntimeState) -> None:
     global _state
     _state = state
@@ -2046,6 +2086,7 @@ async def run_control_menu(state: RuntimeState) -> None:
     device = await _start_input_device(state)
     set_input_device(device)
     view = await _start_screen(state, device)
+    await _report_input_fallback(state, view)
 
     if not menu_enabled(device):
         await state.log(

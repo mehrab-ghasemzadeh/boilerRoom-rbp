@@ -40,9 +40,16 @@ These are the default pins from `DEFAULT_ROW_GPIO` and `DEFAULT_COL_GPIO` in
 The default pins can be changed without editing code:
 
 ```bash
-export BOILERROOM_KEYPAD_ROWS="11,13,15,29"    # BCM GPIO numbers, comma-separated
-export BOILERROOM_KEYPAD_COLS="31,33,35,37"    # BCM GPIO numbers, comma-separated
+export BOILERROOM_KEYPAD_ROWS="17,27,22,5"     # BCM GPIO numbers, comma-separated
+export BOILERROOM_KEYPAD_COLS="6,13,19,26"     # BCM GPIO numbers, comma-separated
 ```
+
+> The values above are the **BCM** column of the table, not the physical pin
+> column. The two are easy to swap -- the earlier version of this example listed
+> `11,13,15,29` and `31,33,35,37`, which are the physical pins, and a keypad
+> configured that way does not start at all: `GPIO.setmode(GPIO.BCM)` rejects
+> anything above 27, and 11, 13 and 15 silently address three unrelated pins.
+> `keypad_layout.check()` now catches both and names the BCM pin meant.
 
 ### Pin Conflict Detection
 

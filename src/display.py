@@ -7,7 +7,7 @@ Wiring (BCM numbering, physical pin in brackets)::
     SID    ->   GPIO10  MOSI    [19]
     CLK    ->   GPIO11  SCLK    [23]
     CS     ->   GPIO8   CE0     [24]   driven by hand, not by the kernel
-    PSB    ->   GND, or GPIO6   [31]   LOW selects serial mode
+    PSB    ->   GND on the module (a solder pad, not a header pin)
     VCC    ->   5V
     GND    ->   GND
 
@@ -21,10 +21,11 @@ Four things about this controller are easy to get wrong and expensive to debug:
   so the handle is opened with ``no_cs`` and CS is driven as an ordinary GPIO
   around each transfer. A panel that stays blank with good signal on SID and
   CLK is almost always this.
-* **PSB must be LOW** for serial mode. On most modules it is a jumper or solder
-  pad rather than a pin on the connector; where it is wired to a GPIO instead,
-  set ``BOILERROOM_DISPLAY_PSB_PIN`` and this drives it -- and goes on holding
-  it after close, see ``_close_sync``.
+* **PSB must be LOW** for serial mode. On this module it is a solder pad rather
+  than a pin on the connector, so nothing here drives it. Where a panel does
+  bring it out, ``BOILERROOM_DISPLAY_PSB_PIN`` makes this drive it and go on
+  holding it after close -- see ``_close_sync`` -- but note that the obvious
+  choice, GPIO6, is the keypad's column 1.
 * **Mode 3.** Clock idles high, sampled on the rising edge. Some clones want
   mode 0; ``BOILERROOM_DISPLAY_SPI_MODE`` switches.
 * **The controller is never reset.** There is no RST line here, so every run
@@ -75,9 +76,14 @@ from display_canvas import BYTES_PER_ROW, HEIGHT, WIDTH, Canvas
 # Chip select, driven as a plain GPIO because the ST7920 wants it active high.
 DISPLAY_CS_GPIO = 8
 
-# Serial-mode select. None means the module ties PSB low itself, which is the
-# usual arrangement -- there is nothing to drive and nothing to hold.
-DISPLAY_PSB_GPIO = 6
+# Serial-mode select.
+#
+# None, because on this build the module ties PSB low itself -- it is a solder
+# pad, not a wire on the connector -- and GPIO6 is the keypad's column 1.
+# Physical pin 31 cannot be both. Set BOILERROOM_DISPLAY_PSB_PIN only on a
+# panel that really does bring PSB out to the header, and then move the keypad
+# column with BOILERROOM_KEYPAD_COLS.
+DISPLAY_PSB_GPIO = None
 
 
 # ============================================================================
