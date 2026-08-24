@@ -296,6 +296,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
 import time
 
 import RPi.GPIO as GPIO
@@ -358,6 +359,16 @@ _CLEAR_DELAY = 0.002
 
 # Normal command execution time
 _COMMAND_DELAY = 0.0001
+
+# Settling time after PSB changes level. The panel is only guaranteed to be
+# listening on the serial lines once it has seen PSB LOW for a moment, and PSB
+# may well have been HIGH until _open ran -- see _close_sync.
+_MODE_SETTLE = 0.01
+
+# Zero bytes sent to flush a half-received frame out of the controller before
+# talking to it. A frame is three bytes, so three finishes the longest possible
+# remainder; the fourth is slack.
+_RESYNC_BYTES = 4
 
 
 # ============================================================================
@@ -473,6 +484,15 @@ class ST7920Display:
         # for the ST7920 on a Raspberry Pi.
         self._bit_delay = 0.0
 
+        # Held across every transfer, and across open and close. Two threads
+        # on this bus at once would interleave their bits; a close landing in
+        # the middle of a refresh would drop CS half way through a byte. Both
+        # leave the controller holding an incomplete frame, which is a fault
+        # that outlives the process -- see _resync.
+        #
+        # Reentrant because _open holds it while _initialise calls _blank.
+        self._bus_lock = threading.RLock()
+
     # ========================================================================
     # LIFECYCLE
     # ========================================================================
@@ -493,51 +513,105 @@ class ST7920Display:
     def _open(self) -> None:
         """
         Configure the Raspberry Pi GPIO pins and initialize the LCD.
+
+        Nothing here may assume a freshly powered controller. There is no reset
+        line on this panel, the GPIO pin configuration outlives the process
+        that set it, and the ST7920 keeps both its mode and its graphics RAM
+        across a restart of the agent. A second run therefore opens onto a
+        controller that is still in the extended instruction set with graphics
+        on, and possibly still waiting for the rest of a frame the previous run
+        was interrupted half way through.
         """
 
         GPIO.setwarnings(False)
         GPIO.setmode(GPIO.BCM)
 
-        # PSB LOW -> serial mode
-        GPIO.setup(
-            self.psb_pin,
-            GPIO.OUT,
-            initial=GPIO.LOW,
-        )
+        with self._bus_lock:
+            # PSB LOW -> serial mode. First of the four, and given a settling
+            # delay below: if this pin was left floating the module's own
+            # pull-up has had it HIGH, and a controller in parallel mode
+            # ignores the serial lines completely.
+            GPIO.setup(
+                self.psb_pin,
+                GPIO.OUT,
+                initial=GPIO.LOW,
+            )
 
-        # Serial data
-        GPIO.setup(
-            self.sid_pin,
-            GPIO.OUT,
-            initial=GPIO.LOW,
-        )
+            # Chip select, deasserted.
+            #
+            # ST7920 serial interface is active HIGH, so LOW is deselected --
+            # and taking it LOW is what resets the controller's serial
+            # receiver.
+            GPIO.setup(
+                self.cs_pin,
+                GPIO.OUT,
+                initial=GPIO.LOW,
+            )
 
-        # Serial clock
-        GPIO.setup(
-            self.clk_pin,
-            GPIO.OUT,
-            initial=GPIO.LOW,
-        )
+            # Serial data
+            GPIO.setup(
+                self.sid_pin,
+                GPIO.OUT,
+                initial=GPIO.LOW,
+            )
 
-        # Chip select.
-        #
-        # ST7920 serial interface is active HIGH.
-        GPIO.setup(
-            self.cs_pin,
-            GPIO.OUT,
-            initial=GPIO.LOW,
-        )
+            # Serial clock
+            GPIO.setup(
+                self.clk_pin,
+                GPIO.OUT,
+                initial=GPIO.LOW,
+            )
 
-        self._previous = None
-        self._started = True
+            time.sleep(_MODE_SETTLE)
 
-        self._initialise()
+            self._previous = None
+            self._started = True
+
+            self._resync()
+            self._initialise()
+
+    def _resync(self) -> None:
+        """
+        Put the controller's serial receiver back in step.
+
+        A transfer is three bytes: a sync byte, then the two padded nibbles of
+        one value. Stop the agent part way through one -- Ctrl-C during a
+        refresh, or SIGTERM from systemd -- and the controller is left holding
+        an incomplete frame, waiting for the bits that would finish it. It has
+        no timeout; it waits across the shutdown, across the pins going quiet,
+        and into the next process.
+
+        Everything the next run sends then lands one frame behind. Its sync
+        bytes are swallowed as the tail of the stale frame, its commands are
+        read as sync bytes, and nothing it asks for happens -- so the panel
+        goes on showing the last frame of the previous run, which is
+        indistinguishable from a hung device.
+
+        Zero bytes are what finish it. A sync byte is five consecutive 1 bits,
+        so zeros can never begin a frame; they can only complete a stale one,
+        which is then discarded as an instruction the controller does not have.
+        Deselecting afterwards clears the receiver whatever state it ended in.
+        """
+
+        self._end_transfer()
+        time.sleep(_COMMAND_DELAY)
+
+        self._begin_transfer()
+
+        try:
+            for _ in range(_RESYNC_BYTES):
+                self._write_byte(0x00)
+
+        finally:
+            self._end_transfer()
+
+        time.sleep(_COMMAND_DELAY)
 
     async def close(self) -> None:
         """
-        Release the GPIO pins.
+        Stop driving the panel, leaving the last frame on the glass.
 
-        The last frame remains displayed.
+        The pins stay claimed rather than being released -- see _close_sync.
         """
 
         if not self._started:
@@ -547,52 +621,49 @@ class ST7920Display:
 
     def _close_sync(self) -> None:
         """
-        Return the pins used by the display to input mode.
+        Leave the bus quiet, with the controller still in serial mode.
 
-        We deliberately do not clear the LCD before closing.
+        We deliberately do not clear the LCD before closing: the last frame
+        stays on the glass rather than the panel going dark.
+
+        The pins are held as outputs driven LOW rather than returned to inputs.
+        GPIO configuration survives this process, and a released PSB is taken
+        HIGH by the pull-up on the module -- which puts the controller into
+        parallel mode, where the next run's serial traffic is ignored and the
+        panel sits frozen on this frame until somebody power cycles it. Held
+        LOW, it is still in serial mode when the next run opens it.
+
+        CS goes first: deselecting is what ends a transfer cleanly and resets
+        the controller's serial receiver.
         """
 
-        try:
-            GPIO.output(
-                self.cs_pin,
-                GPIO.LOW,
-            )
+        with self._bus_lock:
+            try:
+                GPIO.output(
+                    self.cs_pin,
+                    GPIO.LOW,
+                )
 
-            GPIO.output(
-                self.clk_pin,
-                GPIO.LOW,
-            )
+                GPIO.output(
+                    self.clk_pin,
+                    GPIO.LOW,
+                )
 
-            GPIO.output(
-                self.sid_pin,
-                GPIO.LOW,
-            )
+                GPIO.output(
+                    self.sid_pin,
+                    GPIO.LOW,
+                )
 
-            GPIO.setup(
-                self.psb_pin,
-                GPIO.IN,
-            )
+                GPIO.output(
+                    self.psb_pin,
+                    GPIO.LOW,
+                )
 
-            GPIO.setup(
-                self.sid_pin,
-                GPIO.IN,
-            )
+            except Exception:
+                pass
 
-            GPIO.setup(
-                self.clk_pin,
-                GPIO.IN,
-            )
-
-            GPIO.setup(
-                self.cs_pin,
-                GPIO.IN,
-            )
-
-        except Exception:
-            pass
-
-        self._started = False
-        self._previous = None
+            self._started = False
+            self._previous = None
 
     # ========================================================================
     # INITIALIZATION
@@ -601,12 +672,20 @@ class ST7920Display:
     def _initialise(self) -> None:
         """
         Initialize the ST7920 and enable graphics mode.
+
+        Written to be safe on a controller that was never power cycled. On a
+        restart it is still where the previous run left it -- extended
+        instruction set, graphics on -- so the function set that takes it back
+        to the basic instructions is sent twice: the first is what a listening
+        controller acts on, and the second covers the case where the first was
+        spent finishing something stale.
         """
 
         # Allow controller power to stabilize.
         time.sleep(_POWER_ON_DELAY)
 
-        # Basic instruction mode.
+        # Basic instruction mode. Twice, deliberately -- see the docstring.
+        self._command(_CMD_FUNCTION_BASIC)
         self._command(_CMD_FUNCTION_BASIC)
 
         # Display ON.
@@ -626,7 +705,9 @@ class ST7920Display:
         # Enable graphics mode.
         self._command(_CMD_GRAPHICS_ON)
 
-        # Clear the graphics display.
+        # Clear the graphics display. The controller keeps its graphics RAM
+        # across a restart, so without this the previous run's frame stays
+        # under everything drawn from here.
         self._blank()
 
     # ========================================================================
@@ -814,6 +895,12 @@ class ST7920Display:
         Clear all 64 graphics rows.
         """
 
+        with self._bus_lock:
+            self._blank_locked()
+
+    def _blank_locked(self) -> None:
+        """Clear every row. The caller holds the bus."""
+
         empty = bytes(
             BYTES_PER_ROW
         )
@@ -861,7 +948,24 @@ class ST7920Display:
     ) -> int:
         """
         Compare the frame with the previous frame and send only changed rows.
+
+        Serialised against everything else on the bus. A refresh interrupted
+        part way through a byte -- by a close, or by another thread starting
+        its own transfer -- leaves the controller waiting for the rest of a
+        frame that never arrives, and it stays out of step from then on.
         """
+
+        with self._bus_lock:
+            if not self._started:
+                return 0
+
+            return self._flush_locked(frame)
+
+    def _flush_locked(
+        self,
+        frame: bytes,
+    ) -> int:
+        """Send the rows that changed. The caller holds the bus."""
 
         previous = self._previous
 

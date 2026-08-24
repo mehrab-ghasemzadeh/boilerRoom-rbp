@@ -1527,6 +1527,17 @@ Outstanding:
   torn or shifted rows). Note also that the ST7920 at 5V wants about 3.5 V to
   read a logic high and the Pi drives 3.3 V; it usually works, and running the
   panel's VCC at 3.3 V is the usual fix if it does not.
+
+  The panel has no reset line here, so a restart of the agent hands the next
+  run a controller that was never power cycled: still in the extended
+  instruction set, still holding its graphics RAM, and — if the process was
+  killed mid-refresh — still waiting for the rest of a frame. `_open` drives
+  PSB low, resyncs the serial receiver with a run of zero bytes and sends the
+  function set twice to cover all three. `close()` leaves the pins claimed and
+  driven LOW for the same reason: releasing PSB lets the module's pull-up take
+  it high, which is parallel mode, and the pin configuration outlives the
+  process that set it. If a panel is already stuck this way it needs one power
+  cycle to come back — after that, restarts are enough.
 - **No gas threshold logic.** Gas readings are logged and transmitted, but no
   threshold drives the `alarm` relay or `gas_valve`.
 - **A changed mapping needs a restart.** Relay GPIO pins are configured once at
