@@ -765,6 +765,38 @@ find a boiler's probes.
 | `record` (default) | Built from the server's device record, `GET /devices/<id>` |
 | `file` | Read from a local mapping document — bench work only |
 
+#### The relay pin table
+
+`config.RELAY_GPIO` overrides the `gpio` the record gives each relay, and is the
+one part of the wiring this device does not take from the cloud:
+
+| relay | physical pin | BCM |
+|---|---|---|
+| 1 | 12 | 18 |
+| 2 | 16 | 23 |
+| 3 | 18 | 24 |
+| 4 | 22 | 25 |
+| 5 | 32 | 12 |
+| 6 | 36 | 16 |
+| 7 | 38 | 20 |
+| 8 | 40 | 21 |
+
+The pin a relay is screwed to is a fact about the box, and the record has been
+wrong about it: it had the relays on 17–23, which is three of the pins the
+keypad is wired to. The keypad refused to start — correctly, since a keypress
+on a relay pin switches a boiler — and that is what made it visible. What it
+had been hiding is worse: the agent was driving 17 and 22 believing they were
+Boiler 1 and the Fan, with nothing connected to them, while the real relays sat
+on pins it never touched. Boilers that do not fire on programme and a
+cut-out that switches nothing, with every screen still reporting success.
+
+Each substitution is logged once at WARNING. Nothing reports it upstream — the
+server goes on believing its own pins — so this is a local correction, not a
+fix. Correct the record when you can and empty the table; two places holding
+different wiring is its own trap. `BOILERROOM_RELAY_GPIO="1:18,2:23"` overrides
+it without an edit, `{}` disables it, and a pin outside BCM 0–27 or used twice
+is refused rather than mapped.
+
 **The server record is the source of truth.** It carries `physical_id` and
 `channel` on sensors, `gpio` and `role` on relays, and the `boiler_unit` /
 `pump_unit` each is attached to — everything the mapping needs — so an

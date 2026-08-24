@@ -36,6 +36,43 @@ DISPLAY_SPI_MODE = 0b11  # clock idles high, sampled on the rising edge
 # BCM pins the panel occupies: SID -> MOSI, CLK -> SCLK, CS -> CE0 by hand.
 DISPLAY_GPIO = (10, 11, 8)
 
+# Relay board wiring: relay number -> BCM GPIO.
+#
+# The server record carries a gpio for every relay and is normally the only
+# word on the subject. This table overrides it, because the pin a relay is
+# screwed to is a fact about this box that the cloud can be wrong about -- and
+# was: the record moved the relays onto 17-23, which is three pins the keypad
+# is wired to, and the agent spent that time driving pins with nothing on them
+# while the real relays sat idle.
+#
+# Set to {} to trust the record. BOILERROOM_RELAY_GPIO overrides this in the
+# same form, e.g. "1:18,2:23". Each substitution is logged once at WARNING.
+#
+# Nothing reports it upstream: the server goes on believing its own pins, so
+# this is a local correction and not a fix. Correct the record when you can and
+# empty this table -- two places holding different wiring is how the next
+# person loses an afternoon.
+#
+#   relay   physical pin   BCM
+#       1             12    18
+#       2             16    23
+#       3             18    24
+#       4             22    25
+#       5             32    12
+#       6             36    16
+#       7             38    20
+#       8             40    21
+RELAY_GPIO = {
+    1: 18,
+    2: 23,
+    3: 24,
+    4: 25,
+    5: 12,
+    6: 16,
+    7: 20,
+    8: 21,
+}
+
 # Populated by load_device_mapping() at startup
 UNITS: dict[str, dict[str, str]] = {}
 TEMPERATURE_SENSORS: dict[int, dict] = {}

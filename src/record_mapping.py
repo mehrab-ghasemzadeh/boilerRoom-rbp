@@ -62,6 +62,90 @@ def _index_by_id(record: DeviceRecord) -> tuple[dict[int, int], dict[int, int]]:
     )
 
 
+# The header exposes BCM 0-27; anything else is a physical pin number somebody
+# read off a header diagram, which is a different pin or no pin at all.
+MAX_BCM_GPIO = 27
+
+
+def relay_pin_overrides() -> dict[int, int]:
+    """
+    Relay number -> BCM pin, where this installation overrides the record.
+
+    The record's gpio is normally the only word on the subject, and for a
+    correctly provisioned device this returns nothing and changes nothing. It
+    exists because the pin a relay is screwed to is a fact about the box that
+    the cloud can be wrong about, and a wrong pin here is not a degraded
+    feature: it is a boiler that never fires and a cut-out that switches
+    nothing, with every screen still reporting success.
+
+    ``BOILERROOM_RELAY_GPIO="1:18,2:23"`` overrides ``config.RELAY_GPIO``.
+    """
+
+    import os
+
+    from config import RELAY_GPIO
+
+    raw = (os.environ.get("BOILERROOM_RELAY_GPIO") or "").strip()
+
+    if not raw:
+        return dict(RELAY_GPIO)
+
+    pins: dict[int, int] = {}
+
+    for part in raw.replace(" ", "").split(","):
+        if not part:
+            continue
+
+        relay, _, pin = part.partition(":")
+
+        try:
+            pins[int(relay)] = int(pin)
+        except ValueError:
+            raise RecordMappingError(
+                f"BOILERROOM_RELAY_GPIO: {part!r} is not relay:pin"
+            ) from None
+
+    return pins
+
+
+# Substitutions already reported, so the record poll does not repeat eight
+# warnings every fifteen minutes. Keyed by what was said, so a record that
+# changes underneath us is reported again.
+_reported_overrides: set[tuple[str, int, int]] = set()
+
+
+def _apply_pin_override(key: str, entry: dict[str, Any], overrides: dict[int, int]) -> None:
+    """Put this installation's pin on a relay entry, if it has one."""
+
+    try:
+        pin = overrides.get(int(key))
+    except ValueError:
+        return
+
+    if pin is None or pin == entry["gpio"]:
+        return
+
+    if not 0 <= pin <= MAX_BCM_GPIO:
+        raise RecordMappingError(
+            f"relay {key}: {pin} is not a BCM pin (the header has "
+            f"0-{MAX_BCM_GPIO}) — these are BCM numbers, not physical pins"
+        )
+
+    said = (key, pin, entry["gpio"])
+
+    if said not in _reported_overrides:
+        _reported_overrides.add(said)
+        _log.warning(
+            "relay %s: driving GPIO %s, not the GPIO %s in the server record "
+            "(local wiring table in config.RELAY_GPIO)",
+            key,
+            pin,
+            entry["gpio"],
+        )
+
+    entry["gpio"] = pin
+
+
 def _local_key(config_key: str, sequence: int | None, fallback: int) -> int:
     """
     Local handle for a sensor or relay.
@@ -153,6 +237,28 @@ def _relay_entry(
     }
 
 
+def _reject_duplicate_pins(relays: dict[str, dict[str, Any]]) -> None:
+    """
+    Two relays on one pin is a wiring table somebody edited half way through.
+
+    Worth failing on rather than mapping: switching one relay would switch the
+    other, and the pair would most likely be a boiler and something that must
+    not follow it.
+    """
+
+    seen: dict[int, str] = {}
+
+    for key, entry in sorted(relays.items()):
+        pin = entry["gpio"]
+
+        if pin in seen:
+            raise RecordMappingError(
+                f"relays {seen[pin]} and {key} are both on GPIO {pin}"
+            )
+
+        seen[pin] = key
+
+
 def mapping_from_record(record: DeviceRecord) -> dict[str, Any]:
     """
     Convert a device record into a raw mapping document.
@@ -200,6 +306,8 @@ def mapping_from_record(record: DeviceRecord) -> dict[str, Any]:
                 f"gas roles: {sorted(GAS_ROLES)}"
             )
 
+    overrides = relay_pin_overrides()
+
     relays: dict[str, dict[str, Any]] = {}
     for position, relay in enumerate(record.relays, start=1):
         if not relay.enabled:
@@ -209,7 +317,11 @@ def mapping_from_record(record: DeviceRecord) -> dict[str, Any]:
             raise RecordMappingError(
                 f"relay {relay.relay_key or '?'}: duplicate local key {key!r}"
             )
-        relays[key] = _relay_entry(relay, boilers, pumps)
+        entry = _relay_entry(relay, boilers, pumps)
+        _apply_pin_override(key, entry, overrides)
+        relays[key] = entry
+
+    _reject_duplicate_pins(relays)
 
     # Every unit reference is resolved through the declared units above, so
     # anything left dangling here is a bug in this module rather than in the
