@@ -36,7 +36,9 @@ from keypad_layout import (
     KeypadLayoutError,
     LineEditor,
     col_pins,
+    board_pin,
     describe,
+    describe_pin,
     layout,
     row_pins,
 )
@@ -59,7 +61,18 @@ _CLOSED = object()
 
 
 class KeypadError(RuntimeError):
-    """Raised when the keypad cannot be brought up."""
+    """
+    Raised when the keypad cannot be brought up.
+
+    ``summary`` is the same fault in twenty characters, for the panel. The full
+    text explains what to do about it and goes to the log; the panel has six
+    rows of twenty columns and an operator standing in front of it, so it gets
+    the half that says which pins to look at.
+    """
+
+    def __init__(self, message: str, summary: str | None = None):
+        super().__init__(message)
+        self.summary = summary or message
 
 
 class Keypad:
@@ -143,16 +156,25 @@ class Keypad:
         if clashes:
             raise KeypadError(
                 "these pins already drive something else — "
-                + "; ".join(f"GPIO {pin} is {what}" for pin, what in sorted(clashes.items()))
+                + "; ".join(
+                    f"{describe_pin(pin)} is {what}"
+                    for pin, what in sorted(clashes.items())
+                )
                 + ". Refusing to scan them: a keypress on a relay pin switches "
                 "that relay. Move the keypad with BOILERROOM_KEYPAD_ROWS/_COLS, "
-                "or correct the wiring in the server record"
+                "or correct the wiring in the server record",
+                summary="GPIO "
+                + ",".join(str(pin) for pin in sorted(clashes))
+                + " in use",
             )
 
         try:
             await asyncio.to_thread(self._setup_gpio)
         except Exception as exc:  # a wrong pin number, or no permission
-            raise KeypadError(f"could not claim the keypad pins: {exc}") from exc
+            raise KeypadError(
+                f"could not claim the keypad pins: {exc}",
+                summary="pins refused by GPIO",
+            ) from exc
 
         self._thread = threading.Thread(
             target=self._scan_forever, name="keypad", daemon=True
@@ -307,8 +329,16 @@ class Keypad:
         return editor.text
 
     def describe(self) -> list[str]:
-        lines = [f"Keypad rows (A-D): GPIO {', '.join(str(p) for p in self._rows)}"]
-        lines.append(f"Keypad cols (1-4): GPIO {', '.join(str(p) for p in self._cols)}")
+        lines = [
+            "Keypad rows (A-D): "
+            + ", ".join(describe_pin(p) for p in self._rows),
+            "Keypad cols (1-4): "
+            + ", ".join(describe_pin(p) for p in self._cols),
+        ]
+
+        for pin, what in sorted(self.conflicting_pins().items()):
+            lines.append(f"WARNING: {describe_pin(pin)} is {what}")
+
         lines.extend(describe(self._grid))
         return lines
 
@@ -334,14 +364,113 @@ def _write_sync(text: str) -> None:
 # Run this, press every key, and set BOILERROOM_KEYPAD_LAYOUT to what you see.
 
 
-async def _test_mode() -> None:
-    keypad = Keypad()
-    print("\n".join(keypad.describe()))
-    print(
-        "\nPress keys — each one prints the token it currently produces.\n"
-        "Ctrl-C to stop.\n"
+# Pins a 4x4 pad can reasonably be moved to: ordinary GPIO, nothing the board
+# reserves. I2C (2, 3), UART (14, 15) and the SPI pins are left out even when
+# free, because moving a keypad onto them trades one collision for another the
+# day somebody fits the hardware that wants them.
+_CANDIDATE_PINS = (5, 6, 12, 13, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27)
+
+
+def free_pins() -> tuple[tuple[int, ...], tuple[int, ...]] | None:
+    """
+    Eight pins nothing else on this device claims, as rows and columns.
+
+    Offered when the configured pins clash, because the answer to "these three
+    are relays" is a set that is not -- and working that out by hand from a
+    mapping, a pinout and two buses is how the wrong pin gets picked twice.
+    """
+
+    from config import DISPLAY_GPIO, ONE_WIRE_GPIO, RELAYS, SPI_GPIO
+
+    taken = {ONE_WIRE_GPIO, *SPI_GPIO, *DISPLAY_GPIO}
+    taken.update(
+        cfg["gpio"] for cfg in RELAYS.values() if cfg.get("gpio") is not None
     )
-    await keypad.start()
+
+    spare = [pin for pin in _CANDIDATE_PINS if pin not in taken]
+
+    if len(spare) < 8:
+        return None
+
+    return tuple(spare[:4]), tuple(spare[4:8])
+
+
+async def _load_mapping() -> str:
+    """
+    Load the device mapping, so the conflict check sees the real relay pins.
+
+    Without this the check has nothing to compare against and reports a clean
+    bill, which is worse than not checking at all: the agent refuses to start
+    the keypad and the bring-up tool says everything is fine.
+    """
+
+    from config import load_device_mapping
+
+    try:
+        await load_device_mapping()
+    except Exception as exc:
+        return f"no device mapping ({exc}) -- relay clashes cannot be checked"
+
+    from config import RELAYS
+
+    if not RELAYS:
+        return "device mapping has no relays -- relay clashes cannot be checked"
+
+    return f"device mapping loaded: {len(RELAYS)} relay(s)"
+
+
+def _suggest() -> None:
+    """Print a clash-free pin set, if there is one."""
+
+    spare = free_pins()
+
+    if spare is None:
+        print("  No eight free pins are left -- a relay has to move instead.")
+        return
+
+    rows, cols = spare
+
+    print("  Nothing else on this device claims these:")
+    print()
+    print('    export BOILERROOM_KEYPAD_ROWS="%s"' % ",".join(map(str, rows)))
+    print('    export BOILERROOM_KEYPAD_COLS="%s"' % ",".join(map(str, cols)))
+    print()
+    print(
+        "    rows on physical pins "
+        + ", ".join(str(board_pin(p) or "?") for p in rows)
+        + "; columns on "
+        + ", ".join(str(board_pin(p) or "?") for p in cols)
+    )
+    print("  Rewire the pad to match, or move the relays instead.")
+
+
+async def _test_mode() -> None:
+    print("  " + await _load_mapping())
+    print()
+
+    try:
+        keypad = Keypad()
+    except KeypadError as exc:
+        print("  Keypad cannot be configured: %s" % exc)
+        raise SystemExit(1)
+
+    for line in keypad.describe():
+        print("  " + line)
+
+    try:
+        await keypad.start()
+    except KeypadError as exc:
+        print()
+        print("  Keypad did not start.")
+        print("  %s" % exc)
+        print()
+        _suggest()
+        raise SystemExit(1)
+
+    print()
+    print("  Press keys -- each one prints the token it currently produces.")
+    print("  Ctrl-C to stop.")
+    print()
     try:
         while True:
             key = await keypad._queue.get()  # noqa: SLF001 — this is the owner

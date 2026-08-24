@@ -204,6 +204,23 @@ _BOARD_TO_BCM = {
 }
 
 
+_BCM_TO_BOARD = {bcm: board for board, bcm in _BOARD_TO_BCM.items()}
+
+
+def board_pin(bcm: int) -> int | None:
+    """The physical pin a BCM number lands on, where we know it."""
+
+    return _BCM_TO_BOARD.get(bcm)
+
+
+def describe_pin(bcm: int) -> str:
+    """``GPIO 17 (pin 11)``, for messages somebody reads with the board in hand."""
+
+    board = board_pin(bcm)
+
+    return f"GPIO {bcm} (pin {board})" if board else f"GPIO {bcm}"
+
+
 def check(pin: int, name: str = "pin") -> None:
     """
     Reject a physical pin number given where a BCM one belongs.

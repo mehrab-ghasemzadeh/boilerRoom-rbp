@@ -1576,7 +1576,8 @@ async def _start_input_device(state: RuntimeState):
         state.keypad_error = None
         return device
     except Exception as exc:
-        state.keypad_error = str(exc)
+        # The panel gets the short form, the log gets the whole explanation.
+        state.keypad_error = getattr(exc, "summary", None) or str(exc)
         await state.log(
             f"[menu] The {device.name} could not be started: {exc}",
             level=logging.ERROR,
@@ -2065,8 +2066,9 @@ async def _report_input_fallback(state: RuntimeState, view: Screen | None) -> No
     if not reason or view is None:
         return
 
-    lines = ["Keypad did not start.", "The menu needs the", "console keyboard:"]
-    lines.extend(wrap(reason, 21)[:3])
+    lines = ["Keypad did not start:", ""]
+    lines.extend(wrap(reason, 20)[:2])
+    lines.extend(["", "keypad.py --test"])
 
     await view.splash("Keypad", lines)
 
