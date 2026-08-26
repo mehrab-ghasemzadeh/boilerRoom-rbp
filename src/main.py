@@ -52,27 +52,26 @@ def _is_raspberry_pi() -> bool:
 
 
 def _use_mock_hardware() -> bool:
-    """
-    Simulated sensors and relays, or the real ones.
+    # """
+    # Simulated sensors and relays, or the real ones.
 
-    Decided by what this is running on rather than by a constant somebody has
-    to remember to flip. The agent starts at boot from systemd, and a device
-    that came up simulating its own boiler room — reporting invented
-    temperatures to the server, driving nothing — is a failure that looks
-    exactly like success from every screen you might check.
+    # Decided by what this is running on rather than by a constant somebody has
+    # to remember to flip. The agent starts at boot from systemd, and a device
+    # that came up simulating its own boiler room — reporting invented
+    # temperatures to the server, driving nothing — is a failure that looks
+    # exactly like success from every screen you might check.
 
-    BOILERROOM_MOCK_HARDWARE=on forces the mocks, which is how you run the real
-    menu against fake sensors on a Pi; =off forces the hardware, and then a
-    missing RPi.GPIO or spidev is an ImportError at startup rather than a
-    silent downgrade.
-    """
+    # BOILERROOM_MOCK_HARDWARE=on forces the mocks, which is how you run the real
+    # menu against fake sensors on a Pi; =off forces the hardware, and then a
+    # missing RPi.GPIO or spidev is an ImportError at startup rather than a
+    # silent downgrade.
+    # """
     override = os.environ.get("BOILERROOM_MOCK_HARDWARE", "").strip().lower()
     if override in ("on", "1", "true", "yes"):
         return True
     if override in ("off", "0", "false", "no"):
         return False
     return not _is_raspberry_pi()
-
 
 USE_MOCK_HARDWARE = _use_mock_hardware()
 
@@ -101,28 +100,22 @@ AUTH_RETRY_MAX_DELAY_SECONDS = 300
 # ----------------------------------------------------
 
 if USE_MOCK_HARDWARE:
-    from mock_temperature_reader import MockTemperatureReader as TemperatureReader
+    # from mock_temperature_reader import MockTemperatureReader as TemperatureReader
     from mock_gas_reader import MockGasReader as GasReader
     from mock_relay_controller import MockRelayController as RelayController
-    # On the bench the control menu is answered from the keyboard, as it always
-    # has been. BOILERROOM_KEYPAD_EMULATE=on restricts it to the keys the real
-    # keypad has, to find prompts the device could not answer.
-    # from mock_keypad import MockKeypad as Keypad
-    # And shown on a terminal, unless BOILERROOM_DISPLAY=mock asks for the
-    # panel's own screens to be drawn in it — which is the only way to see
-    # them without the hardware in front of you.
-    # from mock_display import MockDisplay as Display
-    from keypad import Keypad
-    # And shown on the ST7920 panel on the SPI header, beside the gas ADC.
-    from display import ST7920Display as Display
+    from mock_keypad import MockKeypad as Keypad
+    from mock_display import MockDisplay as Display
+
+    from temperature_reader import TemperatureReader
+    # from gas_reader import GasReader
+    # from relay_controller import RelayController
+    # from keypad import Keypad
+    # from display import ST7920Display as Display
 else:
     from temperature_reader import TemperatureReader
     from gas_reader import GasReader
     from relay_controller import RelayController
-    # The installed device has no keyboard: the menu is answered on the matrix
-    # keypad wired to the header.
     from keypad import Keypad
-    # And shown on the ST7920 panel on the SPI header, beside the gas ADC.
     from display import ST7920Display as Display
 
 
