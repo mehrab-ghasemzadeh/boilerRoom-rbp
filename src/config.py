@@ -29,12 +29,15 @@ SPI_GPIO = (10, 11, 8)
 # panel on CE1 with BOILERROOM_DISPLAY_SPI_DEVICE=1 and _CS_PIN=7 if both are
 # fitted. display.describe() reports the clash.
 DISPLAY_SPI_BUS = 0
-DISPLAY_SPI_DEVICE = 0  # CE0, with the kernel's chip select disabled
+DISPLAY_SPI_DEVICE = 1  # CE1, with the kernel's chip select disabled
 DISPLAY_SPI_SPEED = 500_000
 DISPLAY_SPI_MODE = 0b11  # clock idles high, sampled on the rising edge
 
-# BCM pins the panel occupies: SID -> MOSI, CLK -> SCLK, CS -> CE0 by hand.
-DISPLAY_GPIO = (10, 11, 8)
+# BCM pin the display CS line uses (active HIGH, driven by hand).
+DISPLAY_CS_GPIO = 7  # physical pin 26
+
+# BCM pins the panel occupies: SID -> MOSI, CLK -> SCLK, CS -> CE1 by hand.
+DISPLAY_GPIO = (10, 11, 7)
 
 # Relay board wiring: relay number -> BCM GPIO.
 #

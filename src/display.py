@@ -74,7 +74,7 @@ from display_canvas import BYTES_PER_ROW, HEIGHT, WIDTH, Canvas
 # ============================================================================
 
 # Chip select, driven as a plain GPIO because the ST7920 wants it active high.
-DISPLAY_CS_GPIO = 8
+DISPLAY_CS_GPIO = 7
 
 # Serial-mode select.
 #
