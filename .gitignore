@@ -3,4 +3,4 @@
 data/
 src/__pycache__/
 *.md
-.env.mock
+# .env.mock
