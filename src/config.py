@@ -83,6 +83,23 @@ GAS_SENSORS: dict[int, dict] = {}
 RELAYS: dict[int, dict] = {}
 
 
+# Raspberry Pi BCM GPIO numbers
+
+# Raspberry Pi GPIO11 / physical pin 23
+# -> ATtiny13 PB2 / physical pin 7
+SCLK_PIN = 11
+
+# Raspberry Pi GPIO9 / physical pin 21
+# -> ATtiny13 PB1 / physical pin 6
+MISO_PIN = 9
+
+# Raspberry Pi GPIO8 / physical pin 24
+# -> ATtiny13 PB0 / physical pin 5
+CS_PIN = 8
+
+
+
+
 async def load_device_mapping():
     """Fetch mapping from the configured provider and sync into module-level dicts."""
     from mapping_store import mapping_store
