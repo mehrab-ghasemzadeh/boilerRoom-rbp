@@ -211,7 +211,10 @@ class GasReader:
                 GPIO.output(CS_PIN, GPIO.HIGH)
                 GPIO.output(SCLK_PIN, GPIO.LOW)
             finally:
-                GPIO.cleanup()
+                # Release only the pins this reader uses. A bare GPIO.cleanup()
+                # would also release relay and keypad pins, dropping every relay
+                # mid-shutdown.
+                GPIO.cleanup([SCLK_PIN, MISO_PIN, CS_PIN])
                 self.started = False
 
     @staticmethod
