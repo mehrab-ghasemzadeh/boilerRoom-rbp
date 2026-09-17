@@ -1,4 +1,3 @@
-```python
 import asyncio
 import time
 
@@ -224,4 +223,3 @@ class GasReader:
         to seconds.
         """
         time.sleep(microseconds / 1_000_000.0)
-```
