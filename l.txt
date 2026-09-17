@@ -1,0 +1,50 @@
+2026-09-17 16:32:58,879 INFO    edge.ws          Waiting for a device session before connecting ...
+2026-09-17 16:32:58,951 WARNING edge.temperature [temperature] No 1-Wire device 28-00000079f19f (looked for /sys/bus/w1/devices/28-00000079f19f/w1_slave). Check the sensor is wired to GPIO 4 and that the server record's physical_id matches the directory under /sys/bus/w1/devices (e.g. '28-0123456789ab').
+2026-09-17 16:32:58,961 WARNING edge.temperature [temperature] No 1-Wire device 28-000000b48106 (looked for /sys/bus/w1/devices/28-000000b48106/w1_slave). Check the sensor is wired to GPIO 4 and that the server record's physical_id matches the directory under /sys/bus/w1/devices (e.g. '28-0123456789ab').
+2026-09-17 16:32:58,979 WARNING edge.temperature [temperature] No 1-Wire device 28-000000ba340d (looked for /sys/bus/w1/devices/28-000000ba340d/w1_slave). Check the sensor is wired to GPIO 4 and that the server record's physical_id matches the directory under /sys/bus/w1/devices (e.g. '28-0123456789ab').
+2026-09-17 16:32:58,981 WARNING edge.temperature [temperature] No 1-Wire device 1233546 (looked for /sys/bus/w1/devices/1233546/w1_slave). Check the sensor is wired to GPIO 4 and that the server record's physical_id matches the directory under /sys/bus/w1/devices (e.g. '28-0123456789ab').
+2026-09-17 16:32:58,983 WARNING edge.temperature [temperature] No 1-Wire device 28FFEEEE5555 (looked for /sys/bus/w1/devices/28FFEEEE5555/w1_slave). Check the sensor is wired to GPIO 4 and that the server record's physical_id matches the directory under /sys/bus/w1/devices (e.g. '28-0123456789ab').
+2026-09-17 16:32:59,068 INFO    edge             Shutdown complete.
+2026-09-17 16:33:12,522 INFO    edge.main        Hardware: real sensors, relays, keypad and display
+2026-09-17 16:33:12,551 INFO    edge.device      Restored cached record for DEV-74AEF54981 (7 server sensor(s), 0 calibration offset(s), 1 disabled)
+2026-09-17 16:33:12,555 WARNING edge.mapping     relay 1: driving GPIO 18, not the GPIO 17 in the server record (local wiring table in config.RELAY_GPIO)
+2026-09-17 16:33:12,556 WARNING edge.mapping     relay 2: driving GPIO 23, not the GPIO 18 in the server record (local wiring table in config.RELAY_GPIO)
+2026-09-17 16:33:12,557 WARNING edge.mapping     relay 3: driving GPIO 24, not the GPIO 19 in the server record (local wiring table in config.RELAY_GPIO)
+2026-09-17 16:33:12,562 WARNING edge.mapping     relay 4: driving GPIO 25, not the GPIO 20 in the server record (local wiring table in config.RELAY_GPIO)
+2026-09-17 16:33:12,563 WARNING edge.mapping     relay 5: driving GPIO 12, not the GPIO 21 in the server record (local wiring table in config.RELAY_GPIO)
+2026-09-17 16:33:12,565 WARNING edge.mapping     relay 6: driving GPIO 16, not the GPIO 22 in the server record (local wiring table in config.RELAY_GPIO)
+2026-09-17 16:33:12,566 WARNING edge.mapping     relay 7: driving GPIO 20, not the GPIO 23 in the server record (local wiring table in config.RELAY_GPIO)
+2026-09-17 16:33:12,567 INFO    edge.mapping     Mapping built from the active record: 5 temperature sensor(s), 1 gas sensor(s), 7 relay(s), 3 unit(s)
+2026-09-17 16:33:12,588 INFO    edge.config      Restored cached config v13 (telemetry every 60s)
+2026-09-17 16:33:12,741 INFO    edge.schedule    Restored cached schedule v7 (1 weekly rule(s), 0 exception(s), tz=Asia/Tehran)
+2026-09-17 16:33:12,756 INFO    edge.setpoint    Restored boiler 1 at 80.0 °C, boiler 2 at 80.0 °C
+2026-09-17 16:33:12,765 INFO    edge.mode        Restored 4 mode(s); still on manual: boiler 1, boiler 2, pump 1, pump 2
+2026-09-17 16:33:12,875 INFO    edge.ws          Waiting for a device session before connecting ...
+2026-09-17 16:33:12,948 WARNING edge.temperature [temperature] No 1-Wire device 28-00000079f19f (looked for /sys/bus/w1/devices/28-00000079f19f/w1_slave). Check the sensor is wired to GPIO 4 and that the server record's physical_id matches the directory under /sys/bus/w1/devices (e.g. '28-0123456789ab').
+2026-09-17 16:33:12,955 WARNING edge.temperature [temperature] No 1-Wire device 28-000000b48106 (looked for /sys/bus/w1/devices/28-000000b48106/w1_slave). Check the sensor is wired to GPIO 4 and that the server record's physical_id matches the directory under /sys/bus/w1/devices (e.g. '28-0123456789ab').
+2026-09-17 16:33:12,967 WARNING edge.temperature [temperature] No 1-Wire device 28FFEEEE5555 (looked for /sys/bus/w1/devices/28FFEEEE5555/w1_slave). Check the sensor is wired to GPIO 4 and that the server record's physical_id matches the directory under /sys/bus/w1/devices (e.g. '28-0123456789ab').
+2026-09-17 16:33:12,970 WARNING edge.temperature [temperature] No 1-Wire device 28-000000ba340d (looked for /sys/bus/w1/devices/28-000000ba340d/w1_slave). Check the sensor is wired to GPIO 4 and that the server record's physical_id matches the directory under /sys/bus/w1/devices (e.g. '28-0123456789ab').
+2026-09-17 16:33:12,986 WARNING edge.temperature [temperature] No 1-Wire device 1233546 (looked for /sys/bus/w1/devices/1233546/w1_slave). Check the sensor is wired to GPIO 4 and that the server record's physical_id matches the directory under /sys/bus/w1/devices (e.g. '28-0123456789ab').
+2026-09-17 16:33:13,059 INFO    edge             Shutdown complete.
+2026-09-17 16:33:26,317 INFO    edge.main        Hardware: real sensors, relays, keypad and display
+2026-09-17 16:33:26,346 INFO    edge.device      Restored cached record for DEV-74AEF54981 (7 server sensor(s), 0 calibration offset(s), 1 disabled)
+2026-09-17 16:33:26,351 WARNING edge.mapping     relay 1: driving GPIO 18, not the GPIO 17 in the server record (local wiring table in config.RELAY_GPIO)
+2026-09-17 16:33:26,353 WARNING edge.mapping     relay 2: driving GPIO 23, not the GPIO 18 in the server record (local wiring table in config.RELAY_GPIO)
+2026-09-17 16:33:26,354 WARNING edge.mapping     relay 3: driving GPIO 24, not the GPIO 19 in the server record (local wiring table in config.RELAY_GPIO)
+2026-09-17 16:33:26,355 WARNING edge.mapping     relay 4: driving GPIO 25, not the GPIO 20 in the server record (local wiring table in config.RELAY_GPIO)
+2026-09-17 16:33:26,356 WARNING edge.mapping     relay 5: driving GPIO 12, not the GPIO 21 in the server record (local wiring table in config.RELAY_GPIO)
+2026-09-17 16:33:26,357 WARNING edge.mapping     relay 6: driving GPIO 16, not the GPIO 22 in the server record (local wiring table in config.RELAY_GPIO)
+2026-09-17 16:33:26,363 WARNING edge.mapping     relay 7: driving GPIO 20, not the GPIO 23 in the server record (local wiring table in config.RELAY_GPIO)
+2026-09-17 16:33:26,365 INFO    edge.mapping     Mapping built from the active record: 5 temperature sensor(s), 1 gas sensor(s), 7 relay(s), 3 unit(s)
+2026-09-17 16:33:26,380 INFO    edge.config      Restored cached config v13 (telemetry every 60s)
+2026-09-17 16:33:26,534 INFO    edge.schedule    Restored cached schedule v7 (1 weekly rule(s), 0 exception(s), tz=Asia/Tehran)
+2026-09-17 16:33:26,548 INFO    edge.setpoint    Restored boiler 1 at 80.0 °C, boiler 2 at 80.0 °C
+2026-09-17 16:33:26,556 INFO    edge.mode        Restored 4 mode(s); still on manual: boiler 1, boiler 2, pump 1, pump 2
+2026-09-17 16:33:26,665 INFO    edge.ws          Waiting for a device session before connecting ...
+2026-09-17 16:33:26,737 WARNING edge.temperature [temperature] No 1-Wire device 28-00000079f19f (looked for /sys/bus/w1/devices/28-00000079f19f/w1_slave). Check the sensor is wired to GPIO 4 and that the server record's physical_id matches the directory under /sys/bus/w1/devices (e.g. '28-0123456789ab').
+2026-09-17 16:33:26,743 WARNING edge.temperature [temperature] No 1-Wire device 28-000000b48106 (looked for /sys/bus/w1/devices/28-000000b48106/w1_slave). Check the sensor is wired to GPIO 4 and that the server record's physical_id matches the directory under /sys/bus/w1/devices (e.g. '28-0123456789ab').
+2026-09-17 16:33:26,762 WARNING edge.temperature [temperature] No 1-Wire device 28FFEEEE5555 (looked for /sys/bus/w1/devices/28FFEEEE5555/w1_slave). Check the sensor is wired to GPIO 4 and that the server record's physical_id matches the directory under /sys/bus/w1/devices (e.g. '28-0123456789ab').
+2026-09-17 16:33:26,773 WARNING edge.temperature [temperature] No 1-Wire device 1233546 (looked for /sys/bus/w1/devices/1233546/w1_slave). Check the sensor is wired to GPIO 4 and that the server record's physical_id matches the directory under /sys/bus/w1/devices (e.g. '28-0123456789ab').
+2026-09-17 16:33:26,756 WARNING edge.temperature [temperature] No 1-Wire device 28-000000ba340d (looked for /sys/bus/w1/devices/28-000000ba340d/w1_slave). Check the sensor is wired to GPIO 4 and that the server record's physical_id matches the directory under /sys/bus/w1/devices (e.g. '28-0123456789ab').
+2026-09-17 16:33:26,827 ERROR   edge.menu        The ST7920 128x64 LCD could not be started: could not open SPI 0.1 for the display: Please set pin numbering mode using GPIO.setmode(GPIO.BOARD) or GPIO.setmode(GPIO.BCM) — the menu falls back to the terminal
+2026-09-17 16:33:26,950 INFO    edge             Shutdown complete.
