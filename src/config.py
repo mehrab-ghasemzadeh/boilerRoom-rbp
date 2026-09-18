@@ -18,7 +18,7 @@ SPI_DEVICE = 0
 SPI_SPEED = 1_000_000
 
 # BCM pins the gas ADC occupies: MOSI, SCLK, CE0.
-SPI_GPIO = (10, 11, 8)
+SPI_GPIO = (9, 11, 8)
 
 # ST7920 128x64 graphical display. The controller wants an active-HIGH chip
 # select, which the kernel cannot drive, so the handle is opened with no_cs and
