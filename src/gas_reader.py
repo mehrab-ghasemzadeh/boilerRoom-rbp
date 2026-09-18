@@ -1,228 +1,79 @@
 import asyncio
-import time
-
-import RPi.GPIO as GPIO
+import spidev
 
 from config import (
-    SCLK_PIN,
-    MISO_PIN,
-    CS_PIN,
+    SPI_BUS,
+    SPI_DEVICE,
+    SPI_SPEED,
+    SPI_MODE,
 )
-
 
 VREF_MV = 5000
 
 
 class GasReader:
     """
-    Raspberry Pi reader for the ATtiny13/ATtiny13A ADC.
+    Raspberry Pi reader for the ATtiny13/ATtiny13A ADC using hardware SPI.
 
-    Communication is implemented using GPIO bit-banged SPI to
-    match the Arduino reference implementation.
+    Communication uses spidev on SPI bus 0, device 0 (CE0).
+    Kernel drives CE0 automatically.
 
-    ATtiny13 response:
+    ATtiny13 response (32 bits = 4 bytes):
 
         Byte 0 = A3 ADC value, high byte
         Byte 1 = A3 ADC value, low byte
         Byte 2 = A2 ADC value, high byte
         Byte 3 = A2 ADC value, low byte
 
-    SPI timing:
-
+    SPI settings:
         Mode 0
-        CS LOW
-        200 us delay
-        Read first bit
-        31 clock cycles:
-            SCLK HIGH
-            150 us
-            SCLK LOW
-            150 us
-            Read MISO
-        CS HIGH
+        1 MHz
+        CE0 (kernel-driven)
     """
 
     def __init__(self):
+        self._spi = None
         self.started = False
 
     async def start(self):
-        await asyncio.to_thread(self._setup_gpio)
+        await asyncio.to_thread(self._open)
 
-    def _setup_gpio(self):
-        # Use BCM GPIO numbering.
-        GPIO.setmode(GPIO.BCM)
-
-        # Clock from Raspberry Pi -> ATtiny13 PB2 / physical pin 7
-        GPIO.setup(
-            SCLK_PIN,
-            GPIO.OUT,
-            initial=GPIO.LOW,
-        )
-
-        # MISO from ATtiny13 PB1 / physical pin 6 -> Raspberry Pi
-        #
-        # Arduino reference uses INPUT_PULLUP.
-        GPIO.setup(
-            MISO_PIN,
-            GPIO.IN,
-            pull_up_down=GPIO.PUD_UP,
-        )
-
-        # CS from Raspberry Pi -> ATtiny13 PB0 / physical pin 5
-        GPIO.setup(
-            CS_PIN,
-            GPIO.OUT,
-            initial=GPIO.HIGH,
-        )
-
+    def _open(self):
+        spi = spidev.SpiDev()
+        spi.open(SPI_BUS, SPI_DEVICE)
+        spi.max_speed_hz = SPI_SPEED
+        spi.mode = SPI_MODE
+        self._spi = spi
         self.started = True
 
     def _read_sync(self):
-        if not self.started:
+        if not self.started or self._spi is None:
             raise RuntimeError("GasReader has not been started")
 
-        # Four received bytes.
-        bytes_received = [0, 0, 0, 0]
+        rx = self._spi.xfer2([0x00, 0x00, 0x00, 0x00])
+        bytes_received = list(rx)
 
-        try:
-            # --------------------------------------------------
-            # 1. Start transaction
-            # --------------------------------------------------
+        raw0 = (bytes_received[0] << 8) | bytes_received[1]
+        raw1 = (bytes_received[2] << 8) | bytes_received[3]
 
-            GPIO.output(CS_PIN, GPIO.LOW)
-
-            # Give the ATtiny13 time to detect SS falling edge
-            # and prepare the first MISO bit.
-            self._delay_us(200)
-
-            # --------------------------------------------------
-            # 2. Read first bit
-            # --------------------------------------------------
-
-            if GPIO.input(MISO_PIN):
-                bytes_received[0] |= 0x80
-
-            # --------------------------------------------------
-            # 3. Generate remaining 31 clock cycles
-            # --------------------------------------------------
-
-            for i in range(1, 32):
-
-                # Rising edge
-                GPIO.output(SCLK_PIN, GPIO.HIGH)
-
-                self._delay_us(150)
-
-                # Falling edge.
-                #
-                # ATtiny13 detects this edge and changes MISO
-                # to the next bit.
-                GPIO.output(SCLK_PIN, GPIO.LOW)
-
-                # Give ATtiny13 time to execute INT0 ISR
-                # and stabilize MISO.
-                self._delay_us(150)
-
-                # Read the new MISO bit.
-                bit_val = GPIO.input(MISO_PIN)
-
-                byte_idx = i // 8
-                bit_idx = 7 - (i % 8)
-
-                if bit_val:
-                    bytes_received[byte_idx] |= (1 << bit_idx)
-
-        finally:
-            # --------------------------------------------------
-            # 4. End transaction
-            # --------------------------------------------------
-
-            GPIO.output(CS_PIN, GPIO.HIGH)
-
-            # Leave clock LOW.
-            GPIO.output(SCLK_PIN, GPIO.LOW)
-
-        # ------------------------------------------------------
-        # 5. Reconstruct the two 16-bit values
-        # ------------------------------------------------------
-
-        raw0 = (
-            (bytes_received[0] << 8)
-            | bytes_received[1]
-        )
-
-        raw1 = (
-            (bytes_received[2] << 8)
-            | bytes_received[3]
-        )
-
-        # ------------------------------------------------------
-        # 6. Convert ADC values to millivolts
-        # ------------------------------------------------------
-
-        mv0 = (
-            raw0 * VREF_MV
-            // 1023
-        )
-
-        mv1 = (
-            raw1 * VREF_MV
-            // 1023
-        )
+        mv0 = raw0 * VREF_MV // 1023
+        mv1 = raw1 * VREF_MV // 1023
 
         return {
-            "a3": {
-                "raw": raw0,
-                "mv": mv0,
-            },
-            "a2": {
-                "raw": raw1,
-                "mv": mv1,
-            },
+            "a3": {"raw": raw0, "mv": mv0},
+            "a2": {"raw": raw1, "mv": mv1},
         }
 
     async def read_all(self):
-        """
-        Read both ATtiny13 ADC channels.
-
-        Returns:
-
-        {
-            "a3": {
-                "raw": 512,
-                "mv": 2502
-            },
-            "a2": {
-                "raw": 750,
-                "mv": 3663
-            }
-        }
-        """
-
         return await asyncio.to_thread(self._read_sync)
 
     async def close(self):
-        await asyncio.to_thread(self._close_gpio)
+        await asyncio.to_thread(self._close_sync)
 
-    def _close_gpio(self):
-        if self.started:
+    def _close_sync(self):
+        if self._spi is not None:
             try:
-                # Put both control lines into a safe state.
-                GPIO.output(CS_PIN, GPIO.HIGH)
-                GPIO.output(SCLK_PIN, GPIO.LOW)
+                self._spi.close()
             finally:
-                # Release only the pins this reader uses. A bare GPIO.cleanup()
-                # would also release relay and keypad pins, dropping every relay
-                # mid-shutdown.
-                GPIO.cleanup([SCLK_PIN, MISO_PIN, CS_PIN])
+                self._spi = None
                 self.started = False
-
-    @staticmethod
-    def _delay_us(microseconds):
-        """
-        Delay approximately the requested number of microseconds.
-
-        time.sleep() accepts seconds, so convert microseconds
-        to seconds.
-        """
-        time.sleep(microseconds / 1_000_000.0)

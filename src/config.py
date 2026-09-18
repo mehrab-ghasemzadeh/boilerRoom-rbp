@@ -16,6 +16,7 @@ ONE_WIRE_PATH = "/sys/bus/w1/devices"
 SPI_BUS = 0
 SPI_DEVICE = 0
 SPI_SPEED = 1_000_000
+SPI_MODE = 0
 
 # BCM pins the gas ADC occupies: MOSI, SCLK, CE0.
 SPI_GPIO = (10, 11, 8)
