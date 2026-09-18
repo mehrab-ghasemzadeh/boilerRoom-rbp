@@ -668,16 +668,6 @@ async def main() -> None:
         level=logging.WARNING if USE_MOCK_HARDWARE else logging.INFO,
     )
 
-    # RPi.GPIO is a C extension and is not thread-safe. Multiple hardware
-    # components call GPIO.setmode() in separate threads via asyncio.to_thread,
-    # and the race corrupts the mode, causing spidev.open() to fail with
-    # "Please set pin numbering mode". Set it once here, in the main thread,
-    # before any task starts.
-    if not USE_MOCK_HARDWARE:
-        import RPi.GPIO as GPIO
-        GPIO.setwarnings(False)
-        GPIO.setmode(GPIO.BCM)
-
     # Constructed here, started by the control menu — it is the only thing that
     # reads from it, and it has to be able to fall back to the keyboard when a
     # keypad will not come up. A misconfigured pin map is caught in the
@@ -734,19 +724,6 @@ async def main() -> None:
         await asyncio.gather(*tasks)
     except asyncio.CancelledError:
         state.shutdown.set()
-    except Exception:
-        # Log which task failed and the full traceback before the finally
-        # block runs shutdown. Without this, the traceback goes to stderr
-        # (uncaptured) and the failure is invisible in the log.
-        logging.exception("[main] A top-level task crashed — see traceback below")
-        for task in tasks:
-            if task.done() and not task.cancelled():
-                exc = task.exception()
-                if exc is not None:
-                    await state.log(
-                        f"[main] Task '{task.get_name()}' crashed: {exc!r}",
-                        level=logging.ERROR,
-                    )
     finally:
         state.shutdown.set()
         for task in tasks:
