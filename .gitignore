@@ -3,4 +3,5 @@
 data/
 src/__pycache__/
 *.md
+.kilo
 # .env.mock
