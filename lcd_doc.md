@@ -125,17 +125,15 @@ takes ~2.5 ms. Navigating a menu typically changes 1-2 rows, costing ~1 ms.
    environmental readings, gas levels, and last reading time. Auto-refreshes
    every 30 seconds with scrolling.
 
-2. **Main menu** — 10 options:
+2. **Main menu** — 9 options:
    - Sensor readings
-   - Device mapping
-   - App configuration
-   - Active schedule
-   - Server record
    - Relay control
    - Unit modes
-   - Reload mapping
-   - Change schedule
    - Temperatures
+   - Change schedule
+   - Active schedule
+   - App configuration
+   - Device mapping
    - Quit
 
 3. **Sub-menus** — Each option opens a context-specific screen with relevant data

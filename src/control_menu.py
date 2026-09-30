@@ -50,7 +50,7 @@ from auth import (
     set_credentials,
     token_manager,
 )
-from config import GAS_SENSORS, RELAYS, TEMPERATURE_SENSORS, UNITS, load_device_mapping
+from config import GAS_SENSORS, RELAYS, TEMPERATURE_SENSORS, UNITS
 from config_editor import (
     LIMIT_FIELDS,
     ConfigEditError,
@@ -67,16 +67,10 @@ from setpoint_store import (
     validate as validate_setpoint,
 )
 from device_config import ConfigError, config_store, describe as describe_config
-from device_record import (
-    describe as describe_record,
-    device_record_store,
-    fetch_device_record,
-    save_cached_device_record,
-)
 from display_font import DEGREE
 from display_canvas import truncate, wrap
 from keypad_layout import CANCEL, ENTER, NEXT, cap_for
-from mapping_provider import DEFAULT_MAPPING_PATH, DEFAULT_SOURCE
+from mapping_provider import DEFAULT_MAPPING_PATH
 from limits_guard import limit_guard
 from runtime_state import RuntimeState
 from screen import BODY_COLUMNS, SCROLL_KEYS, Screen
@@ -110,15 +104,13 @@ REVERSE_DAYS = {index: name for name, index in WEEKDAYS.items()}
 MENU = """
 --- Control Menu ---
   1) Last sensor readings
-  2) Show device mapping
-  3) Show app configuration
-  4) Show active schedule
-  5) Show server device record
-  6) Relay status / control
-  7) Set unit mode (automatic/manual)
-  8) Reload device mapping
-  9) Change schedule
- 10) Change temperatures
+  2) Relay status / control
+  3) Set unit mode (automatic/manual)
+  4) Change temperatures
+  5) Change schedule
+  6) Show active schedule
+  7) Show app configuration
+  8) Show device mapping
   0) Quit
 > """
 
@@ -142,16 +134,13 @@ LIMITS_MENU = """
 # written to fit twenty columns, which is what the panel has.
 MAIN_ITEMS = (
     ("1", "Sensor readings"),
-    ("2", "Device mapping"),
-    ("3", "App configuration"),
-    ("4", "Active schedule"),
-    ("5", "Server record"),
-    ("6", "Relay control"),
-    ("7", "Unit modes"),
-    ("8", "Reload mapping"),
-    ("9", "Change schedule"),
-    ("10", "Temperatures"),
-    ("11", "Change schedule 2"),
+    ("2", "Relay control"),
+    ("3", "Unit modes"),
+    ("4", "Temperatures"),
+    ("5", "Change schedule"),
+    ("6", "Active schedule"),
+    ("7", "App configuration"),
+    ("8", "Device mapping"),
     ("0", "Quit"),
 )
 
@@ -167,15 +156,6 @@ LIMITS_ITEMS = (
     ("2", "Min water temp"),
     ("3", "Max ambient temp"),
     ("4", "Discard local edits"),
-    ("0", "Back"),
-)
-
-SCHEDULE_ITEMS = (
-    ("1", "Add weekly rule"),
-    ("2", "Remove weekly rule"),
-    ("3", "Add date exception"),
-    ("4", "Remove exception"),
-    ("5", "Discard local edits"),
     ("0", "Back"),
 )
 
@@ -425,29 +405,6 @@ async def _show_mapping(state: RuntimeState) -> None:
             f"(role={cfg['role']}, unit={unit}, GPIO {cfg['gpio']})"
         )
     await state.echo("")
-
-
-async def _reload_mapping(state: RuntimeState) -> None:
-    source = os.environ.get("BOILERROOM_MAPPING_SOURCE", DEFAULT_SOURCE).lower()
-    origin = (
-        os.environ.get("BOILERROOM_MAPPING", str(DEFAULT_MAPPING_PATH))
-        if source == "file"
-        else "the server device record"
-    )
-    await state.echo(f"\n[menu] Reloading mapping from {origin} ...")
-    try:
-        await load_device_mapping()
-        await state.echo("[menu] Mapping reloaded successfully.")
-        # The relay controller configured its GPIO pins from the previous
-        # mapping, so a changed pin map only takes effect on restart.
-        await state.echo(
-            "[menu] Note: relay pins are configured at startup — restart the "
-            "agent if the wiring changed.\n"
-        )
-        await state.log(f"[menu] Mapping reloaded from {origin}")
-    except Exception as exc:
-        await state.echo(f"[menu] Failed to reload mapping: {exc}\n")
-        await state.log(f"[menu] Mapping reload failed: {exc}", level=logging.ERROR)
 
 
 async def _relay_menu(state: RuntimeState) -> None:
@@ -1862,7 +1819,7 @@ async def _schedule_editor_menu(state: RuntimeState) -> None:
     index = 0
     while not state.shutdown.is_set():
         chosen = await view.select(
-            "Change schedule 2",
+            "Change schedule",
             [
                 "Add weekly rule",
                 "Remove weekly rule",
@@ -1885,6 +1842,45 @@ async def _schedule_editor_menu(state: RuntimeState) -> None:
             await _add_exception_v2(state)
         elif chosen == 3:
             await _remove_exception_v2(state)
+
+
+async def _schedule_editor_menu_terminal(state: RuntimeState) -> None:
+    """
+    Terminal fallback for the original schedule editor menu.
+    """
+    while not state.shutdown.is_set():
+        _set_context("Schedule")
+        await _schedule_status(state)
+
+        try:
+            choice = await _choose(state, "Schedule", SCHEDULE_V2_ITEMS, """
+  1) Add a weekly rule
+  2) Remove a weekly rule
+  3) Add a date exception
+  4) Remove a date exception
+  0) Back
+> """)
+        except EOFError:
+            state.shutdown.set()
+            return
+
+        _set_context(_label_for(SCHEDULE_V2_ITEMS, choice, "Schedule"))
+
+        if choice == "1":
+            await _add_weekly_rule(state)
+        elif choice == "2":
+            await _remove_weekly_rule(state)
+        elif choice == "3":
+            await _add_exception(state)
+        elif choice == "4":
+            await _remove_exception(state)
+        elif choice in ("0", "", BACK):
+            await state.echo("")
+            return
+        else:
+            await state.echo(f"\n[menu] Unknown option: {choice!r}\n")
+
+        await _flush_page(state)
 
 
 # ---------------------------------------------------------------------------
@@ -2517,62 +2513,29 @@ async def _limits_menu(state: RuntimeState) -> None:
         await _flush_page(state)
 
 
-async def _show_device_record(state: RuntimeState) -> None:
-    """Show the server's own record of this device, refreshing it on request."""
-    await state.echo("")
-    for line in describe_record(device_record_store.record):
-        await state.echo(f"  {line}")
-
-    answer = await _prompt("\n  Re-fetch from server? [1 or y = yes]: ")
-    if not _is_yes(answer):
-        await state.echo("")
-        return
-
-    await state.echo("  Fetching ...")
-    try:
-        record, payload = await fetch_device_record()
-    except Exception as exc:
-        await state.echo(f"  Fetch failed: {exc}\n")
-        return
-
-    device_record_store.set_record(record)
-    await save_cached_device_record(payload)
-    await state.log(f"[device] Record refreshed from the control menu ({record.public_id})")
-
-    await state.echo("")
-    for line in describe_record(record):
-        await state.echo(f"  {line}")
-    await state.echo("")
-
-
 async def _handle_choice(state: RuntimeState, choice: str) -> None:
     if choice == "1":
         await _show_last_readings(state)
     elif choice == "2":
-        await _show_mapping(state)
-    elif choice == "3":
-        await _show_app_config(state)
-    elif choice == "4":
-        await _show_schedule(state)
-    elif choice == "5":
-        await _show_device_record(state)
-    elif choice == "6":
         await _relay_menu(state)
-    elif choice == "7":
+    elif choice == "3":
         await _mode_menu(state)
-    elif choice == "8":
-        await _reload_mapping(state)
-    elif choice == "9":
-        await _schedule_editor_menu_v2(state)
-    elif choice == "10":
+    elif choice == "4":
         await _temperature_menu(state)
-    elif choice == "11":
-        await _schedule_editor_menu_v2(state)
+    elif choice == "5":
+        await _schedule_editor_menu(state)
+    elif choice == "6":
+        await _show_schedule(state)
+    elif choice == "7":
+        await _show_app_config(state)
+    elif choice == "8":
+        await _show_mapping(state)
     elif choice == "0":
         await state.echo("\n[menu] Shutting down ...")
         state.shutdown.set()
     else:
         await state.echo(f"\n[menu] Unknown option: {choice!r}\n")
+
 
 
 def menu_enabled(device=None) -> bool:

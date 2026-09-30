@@ -1206,11 +1206,10 @@ card when the fault is something a restart cannot fix.
 ### Control menu
 
 ```
- 1) Last sensor readings      6) Relay status / control
- 2) Show device mapping       7) Set unit mode (automatic/manual)
- 3) Show app configuration    8) Reload device mapping
- 4) Show active schedule      9) Change schedule
- 5) Show server device record 10) Change temperatures
+ 1) Last sensor readings        5) Change schedule
+ 2) Relay status / control      6) Show active schedule
+ 3) Set unit mode               7) Show app configuration
+ 4) Change temperatures         8) Show device mapping
                               0) Quit
 ```
 
@@ -1223,19 +1222,18 @@ and as a scroll-and-select list on the graphical display where one is fitted.
 Both are built from one option table, so they cannot drift apart — see
 [The display](#the-display).
 
-Option 3 shows the active config, the limits, which boilers are currently cut,
-and the state of the reading database and the telemetry outbox. Option 5 shows
-the server's record of this device — calibration offsets, disabled probes, and
-where cloud intent differs from what was last reported — and offers to re-fetch
-it on the spot, which is the quickest way to confirm an installer's change has
-landed. Option 6 marks any boiler held off by a temperature limit as
-`[CUT: reason]` and refuses to switch it on. Option 7 lists every boiler and
-pump with its mode and relay state, and switches a unit between automatic and
-manual; setting a unit back to automatic hands it to the schedule immediately.
-Option 9 edits the heating programme itself — see
+Option 2 marks any boiler held off by a temperature limit as `[CUT: reason]`
+and refuses to switch it on. Option 3 lists every boiler and pump with its mode
+and relay state, and switches a unit between automatic and manual; setting a
+unit back to automatic hands it to the schedule immediately. Option 4 sets the
+boiler temperatures, see
+[Per-boiler temperatures](#per-boiler-temperatures). Option 5 edits the heating
+programme itself — see
 [Changing the programme on the device](#changing-the-programme-on-the-device) —
-and option 10 the boiler temperatures, see
-[Per-boiler temperatures](#per-boiler-temperatures).
+and option 6 shows what the programme is currently doing. Option 7 shows the
+active config, the limits, which boilers are currently cut, and the state of the
+reading database and the telemetry outbox.
+
 
 ### The keypad
 
@@ -1455,13 +1453,13 @@ body rows and a legend strip:
 
 ```
 +---------------------+
-|MAIN MENU        1/11|   title, and where you are in the list
-|Sensor readings      |   <- selected row, shown inverted
-|Device mapping       |
-|App configuration    |  #
-|Active schedule      |  #  <- scroll bar: which slice of eleven
-|Server record        |  #
-|Relay control        |
+|MAIN MENU         1/9|   title, and where you are in the list
+|Sensor readings     |   <- selected row, shown inverted
+|Relay control       |
+|Unit modes          |  #
+|Temperatures        |  #  <- scroll bar: which slice of nine
+|Change schedule     |  #
+|App configuration   |
 |2^ 8v  # Open * Statu|   legend: what the four keys do here
 +---------------------+
 ```
