@@ -467,11 +467,11 @@ FA_FRAGMENTS = (
     ("(role=", "(نقش="),
     (", unit=", "، واحد="),
     (", GPIO ", "، GPIO "),
-    ("°C", " درجه سلسیوس"),
+    ("°C", " °C"),
     ("  Last readings at ", "  آخرین خوانش‌ها در "),
     (" (cycle ", " (چرخه "),
     (": unavailable", ": در دسترس نیست"),
-    (":   °C", ":   درجه سلسیوس"),
+    (":   °C", ":   °C"),
     # Schedule and limits summary lines.
     ("Schedule v", "زمان‌بندی v"),
     ("Schedule updated — ", "زمان‌بندی به‌روزرسانی شد — "),
