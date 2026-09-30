@@ -1185,9 +1185,9 @@ async def _add_weekly_rule_v2(state: RuntimeState) -> None:
     if turn_on is None:
         return
 
-    # Build time strings
-    start = f"{start_hour:02d}{start_minute:02d}"
-    end = f"{end_hour:02d}{end_minute:02d}"
+    # Build time strings in HH:MM format (required by _parse_time in schedule_runner)
+    start = f"{start_hour:02d}:{start_minute:02d}"
+    end = f"{end_hour:02d}:{end_minute:02d}"
 
     try:
         edited = add_weekly_rule(
@@ -1593,8 +1593,8 @@ async def _add_exception_v2(state: RuntimeState) -> None:
     # Build date/time strings in ISO format
     start_date = f"{start_year:04d}-{start_month:02d}-{start_day:02d}"
     end_date = f"{end_year:04d}-{end_month:02d}-{end_day:02d}"
-    start_time = f"{start_hour:02d}{start_minute:02d}"
-    end_time = f"{end_hour:02d}{end_minute:02d}"
+    start_time = f"{start_hour:02d}:{start_minute:02d}"
+    end_time = f"{end_hour:02d}:{end_minute:02d}"
 
     # For the exception, we use the start date as the exception date
     # and provide start/end times for the window
