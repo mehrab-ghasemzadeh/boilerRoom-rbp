@@ -50,7 +50,7 @@ from auth import (
     set_credentials,
     token_manager,
 )
-from config import GAS_SENSORS, RELAYS, TEMPERATURE_SENSORS, UNITS, load_device_mapping
+from config import GAS_SENSORS, RELAYS, TEMPERATURE_SENSORS, UNITS
 from config_editor import (
     LIMIT_FIELDS,
     ConfigEditError,
@@ -67,19 +67,13 @@ from setpoint_store import (
     validate as validate_setpoint,
 )
 from device_config import ConfigError, config_store, describe as describe_config
-from device_record import (
-    describe as describe_record,
-    device_record_store,
-    fetch_device_record,
-    save_cached_device_record,
-)
 from display_font import DEGREE
-from display_canvas import wrap
-from keypad_layout import CANCEL, ENTER, cap_for
-from mapping_provider import DEFAULT_MAPPING_PATH, DEFAULT_SOURCE
+from display_canvas import truncate, wrap
+from keypad_layout import CANCEL, ENTER, NEXT, cap_for
+from mapping_provider import DEFAULT_MAPPING_PATH
 from limits_guard import limit_guard
 from runtime_state import RuntimeState
-from screen import SCROLL_KEYS, Screen
+from screen import BODY_COLUMNS, SCROLL_KEYS, Screen
 from schedule_editor import (
     ScheduleEditError,
     add_exception,
@@ -96,6 +90,7 @@ from schedule_runner import (
     TARGET_ROLE,
     ScheduleError,
     Target,
+    WEEKDAYS,
     relay_for_target,
     schedule_runner,
 )
@@ -103,18 +98,19 @@ from schedule_runner import (
 # relay role -> schedule target type, the reverse of schedule_runner's map
 ROLE_TARGET = {role: kind for kind, role in TARGET_ROLE.items()}
 
+# Day index -> name for display
+REVERSE_DAYS = {index: name for name, index in WEEKDAYS.items()}
+
 MENU = """
 --- Control Menu ---
   1) Last sensor readings
-  2) Show device mapping
-  3) Show app configuration
-  4) Show active schedule
-  5) Show server device record
-  6) Relay status / control
-  7) Set unit mode (automatic/manual)
-  8) Reload device mapping
-  9) Change schedule
- 10) Change temperatures
+  2) Relay status / control
+  3) Set unit mode (automatic/manual)
+  4) Change temperatures
+  5) Change schedule
+  6) Show active schedule
+  7) Show app configuration
+  8) Show device mapping
   0) Quit
 > """
 
@@ -133,29 +129,18 @@ LIMITS_MENU = """
   0) Back
 > """
 
-SCHEDULE_MENU = """
-  1) Add a weekly rule
-  2) Remove a weekly rule
-  3) Add a date exception
-  4) Remove a date exception
-  5) Discard local edits (back to the published schedule)
-  0) Back
-> """
-
 # The same options as the blocks above, as (answer, short label). The terminal
 # reads the block; the display builds a selectable list from these. Labels are
 # written to fit twenty columns, which is what the panel has.
 MAIN_ITEMS = (
     ("1", "Sensor readings"),
-    ("2", "Device mapping"),
-    ("3", "App configuration"),
-    ("4", "Active schedule"),
-    ("5", "Server record"),
-    ("6", "Relay control"),
-    ("7", "Unit modes"),
-    ("8", "Reload mapping"),
-    ("9", "Change schedule"),
-    ("10", "Temperatures"),
+    ("2", "Relay control"),
+    ("3", "Unit modes"),
+    ("4", "Temperatures"),
+    ("5", "Change schedule"),
+    ("6", "Active schedule"),
+    ("7", "App configuration"),
+    ("8", "Device mapping"),
     ("0", "Quit"),
 )
 
@@ -174,12 +159,11 @@ LIMITS_ITEMS = (
     ("0", "Back"),
 )
 
-SCHEDULE_ITEMS = (
+SCHEDULE_V2_ITEMS = (
     ("1", "Add weekly rule"),
     ("2", "Remove weekly rule"),
     ("3", "Add date exception"),
     ("4", "Remove exception"),
-    ("5", "Discard local edits"),
     ("0", "Back"),
 )
 
@@ -423,30 +407,89 @@ async def _show_mapping(state: RuntimeState) -> None:
     await state.echo("")
 
 
-async def _reload_mapping(state: RuntimeState) -> None:
-    source = os.environ.get("BOILERROOM_MAPPING_SOURCE", DEFAULT_SOURCE).lower()
-    origin = (
-        os.environ.get("BOILERROOM_MAPPING", str(DEFAULT_MAPPING_PATH))
-        if source == "file"
-        else "the server device record"
-    )
-    await state.echo(f"\n[menu] Reloading mapping from {origin} ...")
-    try:
-        await load_device_mapping()
-        await state.echo("[menu] Mapping reloaded successfully.")
-        # The relay controller configured its GPIO pins from the previous
-        # mapping, so a changed pin map only takes effect on restart.
-        await state.echo(
-            "[menu] Note: relay pins are configured at startup — restart the "
-            "agent if the wiring changed.\n"
-        )
-        await state.log(f"[menu] Mapping reloaded from {origin}")
-    except Exception as exc:
-        await state.echo(f"[menu] Failed to reload mapping: {exc}\n")
-        await state.log(f"[menu] Mapping reload failed: {exc}", level=logging.ERROR)
-
-
 async def _relay_menu(state: RuntimeState) -> None:
+    rc = state.relay_controller
+    if rc is None:
+        await state.echo("\n[menu] Relay controller not available.\n")
+        return
+
+    view = screen()
+    if view is None:
+        # Terminal fallback: keep the old number-based interaction
+        await _relay_menu_terminal(state)
+        return
+
+    # Build relay table rows
+    blocked_relays = {
+        relay_for_target(target): reason
+        for target, reason in (await state.get_limit_blocks()).items()
+        if relay_for_target(target) is not None
+    }
+
+    relay_ids = sorted(RELAYS.keys())
+    if not relay_ids:
+        await view.message("Relay control", ["No relays configured."])
+        return
+
+    def build_rows() -> list[str]:
+        rows = []
+        for rid in relay_ids:
+            cfg = RELAYS[rid]
+            on = rc.get_state(rid)
+            state_str = "ON " if on else "OFF"
+            cut = f"  [CUT: {blocked_relays[rid]}]" if rid in blocked_relays else ""
+            rows.append(f"{cfg['name']:<16} {state_str}{cut}")
+        return rows
+
+    # Legend for the relay table
+    legend = (
+        SCROLL_KEYS,
+        (cap_for(ENTER), "Toggle"),
+        (cap_for(NEXT), "Toggle"),
+        (cap_for(CANCEL), "Back"),
+    )
+
+    index = 0
+    while True:
+        rows = build_rows()
+        chosen = await view.select(
+            "Relay control",
+            rows,
+            index=index,
+            legend=legend,
+        )
+        if chosen is None:
+            return
+
+        index = chosen
+        rid = relay_ids[index]
+
+        # Check if blocked by temperature limit
+        if rid in blocked_relays and not rc.get_state(rid):
+            await view.message(
+                "Blocked",
+                [
+                    f"Relay {rid} ({RELAYS[rid]['name']}) is cut off",
+                    f"by a temperature limit:",
+                    f"  {blocked_relays[rid]}",
+                    "",
+                    "Refusing to switch it on.",
+                ],
+            )
+            continue
+
+        # Toggle the relay
+        await rc.toggle(rid)
+        on = rc.get_state(rid)
+        await state.log(f"[menu] Relay {rid} switched {'on' if on else 'off'} by operator")
+        await state.notify_state_change(
+            f"relay {rid} {'on' if on else 'off'} (operator)"
+        )
+        # Loop continues with updated state
+
+
+async def _relay_menu_terminal(state: RuntimeState) -> None:
+    """Terminal fallback for the old number-based relay control."""
     rc = state.relay_controller
     if rc is None:
         await state.echo("\n[menu] Relay controller not available.\n")
@@ -595,6 +638,136 @@ async def _mode_menu(state: RuntimeState) -> None:
     operator standing in the boiler room should not need the cloud to take a
     boiler off the schedule.
     """
+    targets = _controllable_targets()
+    if not targets:
+        await state.echo("\n[menu] No boilers or pumps in the device mapping.\n")
+        return
+
+    view = screen()
+    if view is None:
+        # Terminal fallback: keep the old number-based interaction
+        await _mode_menu_terminal(state)
+        return
+
+    rc = state.relay_controller
+
+    async def build_rows() -> list[str]:
+        modes = await state.get_modes()
+        blocks = await state.get_limit_blocks()
+        rows = []
+        for target in targets:
+            relay_id = relay_for_target(target)
+            relay_state = (
+                ("ON " if rc.get_state(relay_id) else "OFF")
+                if rc is not None and relay_id is not None
+                else "???"
+            )
+            mode = modes.get(target, "automatic")
+            cut = f" [CUT: {blocks[target]}]" if target in blocks else ""
+            rows.append(f"{str(target):<12} {mode:<10} {relay_state}{cut}")
+        return rows
+
+    # Legend for the mode table
+    legend = (
+        SCROLL_KEYS,
+        (cap_for(ENTER), "Change"),
+        (cap_for(NEXT), "Change"),
+        (cap_for(CANCEL), "Back"),
+    )
+
+    index = 0
+    while True:
+        rows = await build_rows()
+        chosen = await view.select(
+            "Unit modes",
+            rows,
+            index=index,
+            legend=legend,
+        )
+        if chosen is None:
+            return
+
+        index = chosen
+        target = targets[index]
+
+        # Show mode change dialog
+        modes = await state.get_modes()
+        current = modes.get(target, "automatic")
+
+        # Use a simple select for mode choice
+        mode_choices = ["automatic", "manual"]
+        mode_index = 0 if current == "automatic" else 1
+
+        mode_chosen = await view.select(
+            f"Mode for {target}",
+            [f"  {m}" for m in mode_choices],
+            index=mode_index,
+            legend=(
+                SCROLL_KEYS,
+                (cap_for(ENTER), "Select"),
+                (cap_for(NEXT), "Select"),
+                (cap_for(CANCEL), "Cancel"),
+            ),
+        )
+
+        if mode_chosen is None:
+            continue  # Back to unit list
+
+        mode = mode_choices[mode_chosen]
+
+        if mode == current:
+            await view.message("No change", [f"{target} is already {mode}."])
+            continue
+
+        await state.set_mode(target, mode)
+
+        if mode == "automatic":
+            # Hand the unit back to the schedule now rather than leaving it where
+            # the operator left it until the next start/end boundary.
+            schedule_runner.forget(target)
+            await schedule_runner.evaluate(state)
+            relay_id = relay_for_target(target)
+            now_on = rc.get_state(relay_id) if rc is not None and relay_id is not None else None
+            await view.message(
+                "Mode changed",
+                [
+                    f"{target} -> automatic",
+                    "The schedule now drives it"
+                    + (f" (relay {relay_id} {'ON' if now_on else 'OFF'})" if now_on is not None else ""),
+                ],
+            )
+        else:
+            await view.message(
+                "Mode changed",
+                [
+                    f"{target} -> manual",
+                    "The schedule will leave it alone",
+                    "until you set it back.",
+                ],
+            )
+
+        await state.log(f"[menu] {target} set to {mode} by operator")
+        # Modes appear in telemetry, so report this without waiting for the cycle.
+        await state.notify_state_change(f"{target} mode {mode} (operator)")
+
+        # Telemetry settles reported_mode; this is what is meant to settle
+        # desired_mode. Fire and forget — see report_unit_mode.
+        from ws_client import report_unit_mode
+
+        if await report_unit_mode(state, target, mode):
+            await view.message("Reported", ["Mode reported to the server."])
+        else:
+            await view.message(
+                "Offline",
+                [
+                    "The mode will be reported",
+                    "when the device reconnects.",
+                ],
+            )
+
+
+async def _mode_menu_terminal(state: RuntimeState) -> None:
+    """Terminal fallback for the old number-based mode control."""
     targets = _controllable_targets()
     if not targets:
         await state.echo("\n[menu] No boilers or pumps in the device mapping.\n")
@@ -903,6 +1076,183 @@ async def _add_weekly_rule(state: RuntimeState) -> None:
     )
 
 
+async def _add_weekly_rule_v2(state: RuntimeState) -> None:
+    """
+    Add a weekly rule using the table-based UI on the display.
+
+    Multi-step flow:
+    1. Select targets (units) with checkboxes
+    2. Select days of week with checkboxes
+    3. Select start hour
+    4. Select start minute
+    5. Select end hour
+    6. Select end minute
+    7. Select state (ON/OFF)
+    """
+    view = screen()
+    if view is None:
+        # Terminal fallback: use the original function
+        await _add_weekly_rule(state)
+        return
+
+    token = _edit_token()
+    document = _document_for_edit()
+
+    # Step 1: Select targets with checkboxes
+    targets = await _select_targets_table(state, view)
+    if not targets:
+        return
+
+    # Step 2: Select days with checkboxes
+    days = await _select_days_table(state, view)
+    if not days:
+        return
+
+    # Step 3: Select start hour
+    start_hour = await _select_time_component(state, view, "Start hour", (0, 23))
+    if start_hour is None:
+        return
+
+    # Step 4: Select start minute (0, 15, 30, 45)
+    start_minute = await _select_time_component(state, view, "Start minute", [0, 15, 30, 45])
+    if start_minute is None:
+        return
+
+    # Step 5: Select end hour
+    end_hour = await _select_time_component(state, view, "End hour", (0, 23))
+    if end_hour is None:
+        return
+
+    # Step 6: Select end minute (0, 15, 30, 45)
+    end_minute = await _select_time_component(state, view, "End minute", [0, 15, 30, 45])
+    if end_minute is None:
+        return
+
+    # Step 7: Select state (ON/OFF)
+    turn_on = await _select_on_off(state, view)
+    if turn_on is None:
+        return
+
+    # Build time strings in HH:MM format (required by _parse_time in schedule_runner)
+    start = f"{start_hour:02d}:{start_minute:02d}"
+    end = f"{end_hour:02d}:{end_minute:02d}"
+
+    try:
+        edited = add_weekly_rule(
+            document,
+            days=days,
+            start=start,
+            end=end,
+            state=turn_on,
+            targets=targets,
+        )
+    except ScheduleEditError as exc:
+        await view.message("Error", [str(exc)])
+        return
+
+    await _apply_local_edit(
+        state,
+        edited,
+        token,
+        f"{start}-{end} {','.join(d[:3] for d in days)} -> "
+        f"{'ON' if turn_on else 'OFF'} for {', '.join(str(t) for t in targets)}",
+    )
+
+
+async def _select_targets_table(state: RuntimeState, view: Screen) -> list[Target] | None:
+    """Select targets using a table with checkboxes."""
+    targets = _controllable_targets()
+    if not targets:
+        await view.message("No targets", ["No boilers or pumps", "in the device mapping."])
+        return None
+
+    items = [f"{str(target):<12} relay {relay_for_target(target)}" for target in targets]
+    legend = (
+        SCROLL_KEYS,
+        (cap_for(ENTER), "Toggle"),
+        (cap_for(NEXT), "Next"),
+        (cap_for(CANCEL), "Cancel"),
+    )
+
+    selected, _ = await view.select_checkboxes("Select targets", items, legend=legend)
+    if selected is None:
+        return None
+
+    chosen = [targets[i] for i, sel in enumerate(selected) if sel]
+    if not chosen:
+        await view.message("No targets", ["At least one target", "must be selected."])
+        return await _select_targets_table(state, view)
+
+    return chosen
+
+
+async def _select_days_table(state: RuntimeState, view: Screen) -> list[str] | None:
+    """Select days of week using checkboxes."""
+    day_names = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+    day_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    items = day_labels
+    legend = (
+        SCROLL_KEYS,
+        (cap_for(ENTER), "Toggle"),
+        (cap_for(NEXT), "Next"),
+        (cap_for(CANCEL), "Cancel"),
+    )
+
+    selected, _ = await view.select_checkboxes("Select days", items, legend=legend)
+    if selected is None:
+        return None
+
+    chosen = [day_names[i] for i, sel in enumerate(selected) if sel]
+    if not chosen:
+        await view.message("No days", ["At least one day", "must be selected."])
+        return await _select_days_table(state, view)
+
+    return chosen
+
+
+async def _select_time_component(
+    state: RuntimeState,
+    view: Screen,
+    title: str,
+    values: list[int] | tuple[int, int],
+) -> int | None:
+    """Select a time component (hour or minute) from a list."""
+    if isinstance(values, tuple):
+        start, end = values
+        value_list = list(range(start, end + 1))
+    else:
+        value_list = values
+
+    items = [f"{v:02d}" for v in value_list]
+    legend = (
+        SCROLL_KEYS,
+        (cap_for(ENTER), "Select"),
+        (cap_for(NEXT), "Select"),
+        (cap_for(CANCEL), "Cancel"),
+    )
+
+    index = await view.select_list(title, items, legend=legend)
+    if index is None:
+        return None
+    return value_list[index]
+
+
+async def _select_on_off(state: RuntimeState, view: Screen) -> bool | None:
+    """Select ON or OFF state."""
+    items = ["ON", "OFF"]
+    legend = (
+        SCROLL_KEYS,
+        (cap_for(ENTER), "Select"),
+        (cap_for(NEXT), "Select"),
+        (cap_for(CANCEL), "Cancel"),
+    )
+
+    index = await view.select_list("Switch state", items, legend=legend)
+    if index is None:
+        return None
+    return index == 0
+
+
 async def _remove_weekly_rule(state: RuntimeState) -> None:
     token = _edit_token()
     document = _document_for_edit()
@@ -925,6 +1275,137 @@ async def _remove_weekly_rule(state: RuntimeState) -> None:
         return
 
     await _apply_local_edit(state, edited, token, f"removed weekly rule {int(raw)}")
+
+
+async def _remove_weekly_rule_v2(state: RuntimeState) -> None:
+    """
+    Delete a weekly rule using the table-based UI on the display.
+
+    Shows a list of all weekly rules. Press:
+    - 2/8: Scroll through rules
+    - 5 (OK): View rule details
+    - 6 (NEXT): Delete the selected rule (with confirmation)
+    - 4 (CANCEL): Back
+    """
+    view = screen()
+    if view is None:
+        # Terminal fallback: use the original function
+        await _remove_weekly_rule(state)
+        return
+
+    schedule = schedule_runner.schedule
+    if schedule is None or not schedule.weekly_rules:
+        await view.message("No rules", ["No weekly rules", "to delete."])
+        return
+
+    rules = schedule.weekly_rules
+    index = 0
+
+    legend = (
+        SCROLL_KEYS,
+        (cap_for(ENTER), "View"),
+        (cap_for(NEXT), "Delete"),
+        (cap_for(CANCEL), "Back"),
+    )
+
+    while not state.shutdown.is_set():
+        # Build display rows
+        rows = []
+        for i, rule in enumerate(rules):
+            days = ", ".join(REVERSE_DAYS[d][:3] for d in sorted(rule.days))
+            targets = ", ".join(str(t) for t in rule.targets)
+            rows.append(
+                f"{i+1}) {rule.start:%H:%M}-{rule.end:%H:%M} {days} "
+                f"-> {'ON' if rule.state else 'OFF'} [{targets}]"
+            )
+
+        chosen = await view.select("Delete weekly rule", rows, index=index, legend=legend)
+        if chosen is None:
+            return
+
+        index = chosen
+
+        # If we get here, the user pressed ENTER (view) or NEXT (delete)
+        # We need to know which key was pressed. Since select() returns index on ENTER/NEXT,
+        # we need a different approach. Let me use a custom selector.
+        # For now, let's show details first, then confirm deletion
+
+        # Show rule details
+        rule = rules[index]
+        days = ", ".join(REVERSE_DAYS[d][:3] for d in sorted(rule.days))
+        targets = ", ".join(str(t) for t in rule.targets)
+        detail_lines = [
+            f"Rule {index + 1}:",
+            f"  Time: {rule.start:%H:%M}-{rule.end:%H:%M}",
+            f"  Days: {days}",
+            f"  Action: {'ON' if rule.state else 'OFF'}",
+            f"  Targets: {targets}",
+        ]
+
+        action = await view.select(
+            f"Rule {index + 1}",
+            ["View details", "Delete this rule", "Back to list"],
+            index=0,
+            legend=(
+                SCROLL_KEYS,
+                (cap_for(ENTER), "Select"),
+                (cap_for(NEXT), "Select"),
+                (cap_for(CANCEL), "Back"),
+            ),
+        )
+
+        if action is None:
+            continue  # Back to list
+
+        if action == 0:
+            # View details - already shown, just wait for key
+            await view.message(f"Rule {index + 1}", detail_lines)
+            continue
+
+        elif action == 1:
+            # Delete this rule
+            confirm = await view.select(
+                "Confirm delete",
+                ["No, keep it", "Yes, delete it"],
+                index=0,
+                legend=(
+                    SCROLL_KEYS,
+                    (cap_for(ENTER), "Select"),
+                    (cap_for(NEXT), "Select"),
+                    (cap_for(CANCEL), "Back"),
+                ),
+            )
+
+            if confirm == 1:
+                token = _edit_token()
+                document = _document_for_edit()
+                try:
+                    edited = remove_weekly_rule(document, index + 1)
+                except ScheduleEditError as exc:
+                    await view.message("Error", [str(exc)])
+                    continue
+
+                await _apply_local_edit(
+                    state,
+                    edited,
+                    token,
+                    f"removed weekly rule {index + 1}",
+                )
+                # Refresh rules list
+                schedule = schedule_runner.schedule
+                rules = schedule.weekly_rules if schedule else []
+                if not rules:
+                    await view.message("Done", ["No more weekly rules."])
+                    return
+                # Adjust index if needed
+                if index >= len(rules):
+                    index = len(rules) - 1
+
+            continue
+
+        elif action == 2:
+            # Back to list
+            continue
 
 
 async def _add_exception(state: RuntimeState) -> None:
@@ -977,6 +1458,152 @@ async def _add_exception(state: RuntimeState) -> None:
     )
 
 
+async def _add_exception_v2(state: RuntimeState) -> None:
+    """
+    Add a date exception using the table-based UI on the display.
+
+    Multi-step flow:
+    1. Select targets (units) with checkboxes
+    2. Select start year
+    3. Select start month
+    4. Select start day
+    5. Select start hour
+    6. Select start minute
+    7. Select end year
+    8. Select end month
+    9. Select end day
+    10. Select end hour
+    11. Select end minute
+    12. Select state (ON/OFF)
+    """
+    view = screen()
+    if view is None:
+        # Terminal fallback: use the original function
+        await _add_exception(state)
+        return
+
+    token = _edit_token()
+    document = _document_for_edit()
+
+    # Step 1: Select targets with checkboxes
+    targets = await _select_targets_table(state, view)
+    if not targets:
+        return
+
+    # Step 2-6: Select start date/time components
+    today = _schedule_today()
+    start_year = await _select_year(state, view, "Start year", today.year, today.year + 5)
+    if start_year is None:
+        return
+
+    start_month = await _select_month(state, view, "Start month")
+    if start_month is None:
+        return
+
+    start_day = await _select_day(state, view, "Start day", start_year, start_month)
+    if start_day is None:
+        return
+
+    start_hour = await _select_time_component(state, view, "Start hour", (0, 23))
+    if start_hour is None:
+        return
+
+    start_minute = await _select_time_component(state, view, "Start minute", [0, 15, 30, 45])
+    if start_minute is None:
+        return
+
+    # Step 7-11: Select end date/time components
+    end_year = await _select_year(state, view, "End year", start_year, start_year + 5)
+    if end_year is None:
+        return
+
+    end_month = await _select_month(state, view, "End month")
+    if end_month is None:
+        return
+
+    end_day = await _select_day(state, view, "End day", end_year, end_month)
+    if end_day is None:
+        return
+
+    end_hour = await _select_time_component(state, view, "End hour", (0, 23))
+    if end_hour is None:
+        return
+
+    end_minute = await _select_time_component(state, view, "End minute", [0, 15, 30, 45])
+    if end_minute is None:
+        return
+
+    # Step 12: Select state (ON/OFF)
+    turn_on = await _select_on_off(state, view)
+    if turn_on is None:
+        return
+
+    # Build date/time strings in ISO format
+    start_date = f"{start_year:04d}-{start_month:02d}-{start_day:02d}"
+    end_date = f"{end_year:04d}-{end_month:02d}-{end_day:02d}"
+    start_time = f"{start_hour:02d}:{start_minute:02d}"
+    end_time = f"{end_hour:02d}:{end_minute:02d}"
+
+    # For the exception, we use the start date as the exception date
+    # and provide start/end times for the window
+    date = start_date
+    all_day = False
+    start = start_time
+    end = end_time
+
+    try:
+        edited = add_exception(
+            document,
+            date=date,
+            state=turn_on,
+            targets=targets,
+            all_day=all_day,
+            start=start,
+            end=end,
+            reason="set on the device",
+        )
+    except ScheduleEditError as exc:
+        await view.message("Error", [str(exc)])
+        return
+
+    await _apply_local_edit(
+        state,
+        edited,
+        token,
+        f"exception {date} {start}-{end} -> {'ON' if turn_on else 'OFF'} "
+        f"for {', '.join(str(t) for t in targets)}",
+    )
+
+
+async def _select_year(
+    state: RuntimeState,
+    view: Screen,
+    title: str,
+    start_year: int,
+    end_year: int,
+) -> int | None:
+    """Select a year from a range."""
+    return await _select_time_component(state, view, title, (start_year, end_year))
+
+
+async def _select_month(state: RuntimeState, view: Screen, title: str) -> int | None:
+    """Select a month (1-12)."""
+    return await _select_time_component(state, view, title, (1, 12))
+
+
+async def _select_day(
+    state: RuntimeState,
+    view: Screen,
+    title: str,
+    year: int,
+    month: int,
+) -> int | None:
+    """Select a day (1-28/29/30/31) based on year and month."""
+    import calendar
+    max_day = calendar.monthrange(year, month)[1]
+    return await _select_time_component(state, view, title, (1, max_day))
+
+
 async def _remove_exception(state: RuntimeState) -> None:
     token = _edit_token()
     document = _document_for_edit()
@@ -1000,6 +1627,139 @@ async def _remove_exception(state: RuntimeState) -> None:
         return
 
     await _apply_local_edit(state, edited, token, f"removed exception {int(raw)}")
+
+
+async def _remove_exception_v2(state: RuntimeState) -> None:
+    """
+    Delete a date exception using the table-based UI on the display.
+
+    Shows a list of all exceptions. Press:
+    - 2/8: Scroll through exceptions
+    - 5 (OK): View exception details
+    - 6 (NEXT): Delete the selected exception (with confirmation)
+    - 4 (CANCEL): Back
+    """
+    view = screen()
+    if view is None:
+        # Terminal fallback: use the original function
+        await _remove_exception(state)
+        return
+
+    schedule = schedule_runner.schedule
+    if schedule is None or not schedule.exceptions:
+        await view.message("No exceptions", ["No date exceptions", "to delete."])
+        return
+
+    exceptions = schedule.exceptions
+    index = 0
+
+    while not state.shutdown.is_set():
+        # Build display rows
+        rows = []
+        for i, exc in enumerate(exceptions):
+            window = (
+                "all day"
+                if exc.all_day or exc.start is None
+                else f"{exc.start:%H:%M}-{(exc.end or datetime.time.max):%H:%M}"
+            )
+            targets = ", ".join(str(t) for t in exc.targets)
+            rows.append(
+                f"{i+1}) {exc.date} {window} -> "
+                f"{'ON' if exc.state else 'OFF'} [{targets}]"
+            )
+
+        chosen = await view.select("Delete exception", rows, index=index, legend=(
+            SCROLL_KEYS,
+            (cap_for(ENTER), "View"),
+            (cap_for(NEXT), "Delete"),
+            (cap_for(CANCEL), "Back"),
+        ))
+        if chosen is None:
+            return
+
+        index = chosen
+
+        # Show exception details and action menu
+        exc = exceptions[index]
+        window = (
+            "all day"
+            if exc.all_day or exc.start is None
+            else f"{exc.start:%H:%M}-{(exc.end or datetime.time.max):%H:%M}"
+        )
+        targets = ", ".join(str(t) for t in exc.targets)
+        detail_lines = [
+            f"Exception {index + 1}:",
+            f"  Date: {exc.date}",
+            f"  Window: {window}",
+            f"  Action: {'ON' if exc.state else 'OFF'}",
+            f"  Targets: {targets}",
+            f"  Reason: {exc.reason}",
+        ]
+
+        action = await view.select(
+            f"Exception {index + 1}",
+            ["View details", "Delete this exception", "Back to list"],
+            index=0,
+            legend=(
+                SCROLL_KEYS,
+                (cap_for(ENTER), "Select"),
+                (cap_for(NEXT), "Select"),
+                (cap_for(CANCEL), "Back"),
+            ),
+        )
+
+        if action is None:
+            continue  # Back to list
+
+        if action == 0:
+            # View details
+            await view.message(f"Exception {index + 1}", detail_lines)
+            continue
+
+        elif action == 1:
+            # Delete this exception
+            confirm = await view.select(
+                "Confirm delete",
+                ["No, keep it", "Yes, delete it"],
+                index=0,
+                legend=(
+                    SCROLL_KEYS,
+                    (cap_for(ENTER), "Select"),
+                    (cap_for(NEXT), "Select"),
+                    (cap_for(CANCEL), "Back"),
+                ),
+            )
+
+            if confirm == 1:
+                token = _edit_token()
+                document = _document_for_edit()
+                try:
+                    edited = remove_exception(document, index + 1)
+                except ScheduleEditError as exc:
+                    await view.message("Error", [str(exc)])
+                    continue
+
+                await _apply_local_edit(
+                    state,
+                    edited,
+                    token,
+                    f"removed exception {index + 1}",
+                )
+                # Refresh exceptions list
+                schedule = schedule_runner.schedule
+                exceptions = schedule.exceptions if schedule else []
+                if not exceptions:
+                    await view.message("Done", ["No more exceptions."])
+                    return
+                # Adjust index if needed
+                if index >= len(exceptions):
+                    index = len(exceptions) - 1
+
+            continue
+
+        elif action == 2:
+            # Back to list
+            continue
 
 
 async def _discard_local_edits(state: RuntimeState) -> None:
@@ -1039,23 +1799,72 @@ async def _discard_local_edits(state: RuntimeState) -> None:
 
 async def _schedule_editor_menu(state: RuntimeState) -> None:
     """
-    Change the heating programme from the device.
+    Change the heating programme from the device - table-based UI.
 
-    The same reasoning as option 7: an operator standing in the boiler room
-    should not need the cloud to change how the boilers run. Edits hold until
-    the server publishes a schedule, which then wins.
+    Shows the four main actions as a selectable table.
+    """
+    view = screen()
+    if view is None:
+        # Terminal fallback: use the original menu
+        await _schedule_editor_menu_terminal(state)
+        return
+
+    legend = (
+        SCROLL_KEYS,
+        (cap_for(ENTER), "Select"),
+        (cap_for(NEXT), "Select"),
+        (cap_for(CANCEL), "Back"),
+    )
+
+    index = 0
+    while not state.shutdown.is_set():
+        chosen = await view.select(
+            "Change schedule",
+            [
+                "Add weekly rule",
+                "Remove weekly rule",
+                "Add date exception",
+                "Remove exception",
+            ],
+            index=index,
+            legend=legend,
+        )
+        if chosen is None:
+            return
+
+        index = chosen
+
+        if chosen == 0:
+            await _add_weekly_rule_v2(state)
+        elif chosen == 1:
+            await _remove_weekly_rule_v2(state)
+        elif chosen == 2:
+            await _add_exception_v2(state)
+        elif chosen == 3:
+            await _remove_exception_v2(state)
+
+
+async def _schedule_editor_menu_terminal(state: RuntimeState) -> None:
+    """
+    Terminal fallback for the original schedule editor menu.
     """
     while not state.shutdown.is_set():
         _set_context("Schedule")
         await _schedule_status(state)
 
         try:
-            choice = await _choose(state, "Schedule", SCHEDULE_ITEMS, SCHEDULE_MENU)
+            choice = await _choose(state, "Schedule", SCHEDULE_V2_ITEMS, """
+  1) Add a weekly rule
+  2) Remove a weekly rule
+  3) Add a date exception
+  4) Remove a date exception
+  0) Back
+> """)
         except EOFError:
             state.shutdown.set()
             return
 
-        _set_context(_label_for(SCHEDULE_ITEMS, choice, "Schedule"))
+        _set_context(_label_for(SCHEDULE_V2_ITEMS, choice, "Schedule"))
 
         if choice == "1":
             await _add_weekly_rule(state)
@@ -1065,8 +1874,6 @@ async def _schedule_editor_menu(state: RuntimeState) -> None:
             await _add_exception(state)
         elif choice == "4":
             await _remove_exception(state)
-        elif choice == "5":
-            await _discard_local_edits(state)
         elif choice in ("0", "", BACK):
             await state.echo("")
             return
@@ -1121,7 +1928,216 @@ async def _show_temperature_status(state: RuntimeState) -> None:
         )
 
 
+# The temperatures offered on the panel, every TEMP_STEP_C degrees between the
+# bounds DEVICE.md gives boiler.set_temperature. Sixteen of them is a list that
+# scrolls rather than one that fits, which is the point: the keypad moves a
+# highlight, so length costs nothing but a few presses of ``8``, while typing
+# "73" costs a hunt for the digits.
+TEMP_STEP_C = 5.0
+
+# The last row of the temperature list, which is not a temperature. Where the
+# terminal types a negative to clear a limit, the panel needs a row to select,
+# and this is the one an operator would otherwise have no way to reach.
+DEVICE_LIMIT_ROW = "Device-wide limit"
+
+# How the same choice is put in a table row, where there is no room to spell it
+# out. The last row of the list behind it says what this means, so here it only
+# has to be short enough that the unit's own number survives the row.
+DEVICE_LIMIT_SHORT = "none"
+
+# Both of these screens choose something, so both say the same three things:
+# move, choose, go back. The accept key and the next key are the same key here.
+_SET_LEGEND = (
+    SCROLL_KEYS,
+    (cap_for(ENTER), "Set"),
+    (cap_for(NEXT), "Set"),
+    (cap_for(CANCEL), "Back"),
+)
+
+
+def _unit_label(target: Target) -> str:
+    """
+    The name the mapping gives a unit, falling back to ``boiler 1``.
+
+    Every unit is ``pot_N`` in the mapping, boiler or pump — the same way
+    relay_for_target finds a unit's relay.
+    """
+    return UNITS.get(f"pot_{target.index}", {}).get("name") or str(target)
+
+
+def _temperature_row(label: str, shown: str) -> str:
+    """
+    ``Boiler 1 - 70°C``, on twenty columns.
+
+    The temperature is the answer, so it keeps its place and the name gives
+    way: a mapping may call a unit something long, and a row that has had its
+    number truncated off the end has thrown away the only part of it that was
+    new.
+    """
+    room = BODY_COLUMNS - len(shown) - len(" - ")
+    if len(label) > room:
+        label = truncate(label, max(1, room))
+    return f"{label} - {shown}"
+
+
+def _shown_temperature(entry) -> str:
+    """A boiler's setpoint as the table shows it."""
+    if entry is None:
+        return DEVICE_LIMIT_SHORT
+    return f"{entry.temperature_c:g}{DEGREE}C"
+
+
+def _temperature_values(current) -> list[float]:
+    """
+    The temperatures a boiler can be given, ascending.
+
+    The step grid, plus the boiler's own current setpoint when that is not one
+    of them — set from the terminal, or pushed by the server. It belongs in the
+    list: the highlight opens on it, and an operator comparing what the server
+    sent against the choices should find the number they were given rather than
+    the nearest one to it.
+    """
+    values = [
+        float(step)
+        for step in range(int(TEMP_STEP_C), int(MAX_SETPOINT_C) + 1, int(TEMP_STEP_C))
+    ]
+    held = current.temperature_c if current is not None else None
+    if (
+        held is not None
+        and MIN_SETPOINT_C <= held <= MAX_SETPOINT_C
+        and held not in values
+    ):
+        values.append(float(held))
+        values.sort()
+    return values
+
+
+async def _temperature_table(state: RuntimeState) -> None:
+    """
+    Set a boiler's temperature from the panel: a table, then a list.
+
+    Two screens because the question has two parts. Which boiler — answered by
+    the table below, one row per boiler, scrolling with the scroll keys. And
+    which temperature for it — answered by the list behind the accept key or
+    the next key, which are the same key here and both open it.
+
+    A list is the right shape for both on a keypad: the selection moves with
+    the same two keys that scroll, and neither answer has to be spelled out in
+    digits at a panel. The terminal menu asks the same two questions in the same
+    order, because it is the same operation — see _set_boiler_temperature.
+    """
+    view = screen()
+
+    targets = await _boiler_targets_with_relays()
+    if not targets:
+        await view.message("Temperatures", ["No boilers in the", "device mapping."])
+        return
+
+    index = 0
+    while not state.shutdown.is_set():
+        setpoints = await state.get_setpoints()
+        rows = [
+            _temperature_row(
+                _unit_label(target), _shown_temperature(setpoints.get(target.index))
+            )
+            for target in targets
+        ]
+
+        chosen = await view.select("Temperatures", rows, index=index, legend=_SET_LEGEND)
+        if chosen is None:
+            return
+
+        index = chosen
+        await _temperature_list(state, targets[index])
+
+
+async def _temperature_list(state: RuntimeState, target: Target) -> None:
+    """The temperatures one boiler can be held at, and the choice to leave it."""
+    view = screen()
+    label = _unit_label(target)
+
+    setpoints = await state.get_setpoints()
+    current = setpoints.get(target.index)
+    values = _temperature_values(current)
+
+    # Opens on the temperature it is held at now, so the highlight says what
+    # this is before a single key is pressed.
+    index = values.index(current.temperature_c) if current is not None else 0
+
+    rows = [f"{value:g}{DEGREE}C" for value in values] + [DEVICE_LIMIT_ROW]
+
+    chosen = await view.select(label, rows, index=index, legend=_SET_LEGEND)
+    if chosen is None:
+        return
+
+    if chosen == len(values):
+        await _clear_setpoint(state, target)
+        return
+
+    value = values[chosen]
+    if current is not None and current.temperature_c == value:
+        await view.message(
+            "No change", [f"{label} is already at {value:g}{DEGREE}C."]
+        )
+        return
+
+    await state.set_setpoint(target.index, value)
+    await state.log(
+        f"[menu] Operator set {target} temperature to {value:g} °C",
+        level=logging.WARNING,
+    )
+    await view.message(
+        "Temperature set",
+        [
+            f"{label} is now held at {value:g}{DEGREE}C.",
+            "",
+            "Publishing to the server ...",
+        ],
+    )
+
+    await view.message("Temperature set", await _publish_setpoint(state, target.index, value))
+
+
+async def _clear_setpoint(state: RuntimeState, target: Target) -> None:
+    """
+    Drop a boiler's own temperature, handing it back to the device-wide limit.
+
+    The last row of _temperature_list. Said out loud because it cannot be: the
+    server keeps the last temperature it was told, and there is no protocol
+    message for "no setpoint" — so this changes what this device holds the
+    boiler at, and only that.
+    """
+    view = screen()
+    label = _unit_label(target)
+
+    await state.clear_setpoint(target.index)
+    await state.log(
+        f"[menu] Operator cleared {target}'s temperature — it now follows the "
+        "device-wide limit",
+        level=logging.WARNING,
+    )
+
+    from ws_client import push_device_state
+
+    await push_device_state(state)
+
+    await view.message(
+        "Setpoint cleared",
+        [
+            f"{label} now follows the device-wide limit.",
+            "",
+            "The server keeps the last temperature it was given.",
+        ],
+    )
+
+
 async def _set_boiler_temperature(state: RuntimeState) -> None:
+    if screen() is not None:
+        # A table of boilers and a list of temperatures, rather than two
+        # typed answers. Same operation as below; see _temperature_table.
+        await _temperature_table(state)
+        return
+
     targets = await _boiler_targets_with_relays()
     if not targets:
         await state.echo("\n[menu] No boilers in the device mapping.\n")
@@ -1223,6 +2239,42 @@ async def _clear_boiler_temperature(state: RuntimeState) -> None:
     await push_device_state(state)
 
 
+async def _publish_setpoint(state: RuntimeState, index: int, temperature: float) -> list[str]:
+    """
+    Offer a setpoint upstream and say what became of it.
+
+    Returned as lines rather than echoed, because the panel shows them as a
+    message and the terminal prints them with a ``[menu]`` prefix in front —
+    the two faces of the same outcome, not two wordings of it.
+    """
+    from ws_client import publish_boiler_temperature, push_device_state
+
+    await push_device_state(state)
+
+    ack = await publish_boiler_temperature(state, index, temperature)
+
+    if ack and ack.get("ok"):
+        return [
+            f"Published — boiler {index} is at",
+            f"{ack.get('temperature_c')} °C, and the room's",
+            "other devices have been told.",
+        ]
+
+    if ack:
+        return [
+            "The server refused it:",
+            f"{ack.get('error') or ack}",
+            "Still in force here; offered again",
+            "on the next connection.",
+        ]
+
+    return [
+        "No answer from the server.",
+        "In force here; published when",
+        "the device reconnects.",
+    ]
+
+
 async def _after_temperature_change(
     state: RuntimeState,
     index: int,
@@ -1236,30 +2288,9 @@ async def _after_temperature_change(
     ):
         await state.echo(f"  {line}")
 
-    from ws_client import publish_boiler_temperature, push_device_state
-
-    await push_device_state(state)
-
     await state.echo("[menu] Publishing to the server ...")
-    ack = await publish_boiler_temperature(state, index, temperature)
-
-    if ack and ack.get("ok"):
-        await state.echo(
-            f"[menu] Published — the server has boiler {index} at "
-            f"{ack.get('temperature_c')} °C, and has told the room's other "
-            "devices.\n"
-        )
-    elif ack:
-        await state.echo(
-            f"[menu] The server refused it: {ack.get('error') or ack}\n"
-            "[menu] The temperature is still in force here and will be offered "
-            "again on the next connection.\n"
-        )
-    else:
-        await state.echo(
-            "[menu] No answer from the server — the temperature is in force "
-            "here and will be published when the device reconnects.\n"
-        )
+    outcome = await _publish_setpoint(state, index, temperature)
+    await state.echo("\n".join(f"[menu] {line}" for line in outcome) + "\n")
 
 
 async def _temperature_menu(state: RuntimeState) -> None:
@@ -1271,6 +2302,13 @@ async def _temperature_menu(state: RuntimeState) -> None:
     wants 75. The device-wide config limits sit underneath as the fallback for
     a boiler with no temperature of its own.
     """
+    view = screen()
+    if view is not None:
+        # Display mode: use the table-based UI directly
+        await _temperature_table(state)
+        return
+
+    # Terminal fallback: keep the old submenu-based interaction
     while not state.shutdown.is_set():
         _set_context("Temperatures")
         await _show_temperature_status(state)
@@ -1475,60 +2513,29 @@ async def _limits_menu(state: RuntimeState) -> None:
         await _flush_page(state)
 
 
-async def _show_device_record(state: RuntimeState) -> None:
-    """Show the server's own record of this device, refreshing it on request."""
-    await state.echo("")
-    for line in describe_record(device_record_store.record):
-        await state.echo(f"  {line}")
-
-    answer = await _prompt("\n  Re-fetch from server? [1 or y = yes]: ")
-    if not _is_yes(answer):
-        await state.echo("")
-        return
-
-    await state.echo("  Fetching ...")
-    try:
-        record, payload = await fetch_device_record()
-    except Exception as exc:
-        await state.echo(f"  Fetch failed: {exc}\n")
-        return
-
-    device_record_store.set_record(record)
-    await save_cached_device_record(payload)
-    await state.log(f"[device] Record refreshed from the control menu ({record.public_id})")
-
-    await state.echo("")
-    for line in describe_record(record):
-        await state.echo(f"  {line}")
-    await state.echo("")
-
-
 async def _handle_choice(state: RuntimeState, choice: str) -> None:
     if choice == "1":
         await _show_last_readings(state)
     elif choice == "2":
-        await _show_mapping(state)
-    elif choice == "3":
-        await _show_app_config(state)
-    elif choice == "4":
-        await _show_schedule(state)
-    elif choice == "5":
-        await _show_device_record(state)
-    elif choice == "6":
         await _relay_menu(state)
-    elif choice == "7":
+    elif choice == "3":
         await _mode_menu(state)
-    elif choice == "8":
-        await _reload_mapping(state)
-    elif choice == "9":
-        await _schedule_editor_menu(state)
-    elif choice == "10":
+    elif choice == "4":
         await _temperature_menu(state)
+    elif choice == "5":
+        await _schedule_editor_menu(state)
+    elif choice == "6":
+        await _show_schedule(state)
+    elif choice == "7":
+        await _show_app_config(state)
+    elif choice == "8":
+        await _show_mapping(state)
     elif choice == "0":
         await state.echo("\n[menu] Shutting down ...")
         state.shutdown.set()
     else:
         await state.echo(f"\n[menu] Unknown option: {choice!r}\n")
+
 
 
 def menu_enabled(device=None) -> bool:

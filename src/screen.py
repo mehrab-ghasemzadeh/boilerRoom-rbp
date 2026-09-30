@@ -31,6 +31,7 @@ from keypad_layout import (
     CANCEL,
     DEL,
     ENTER,
+    NEXT,
     SCROLL_DOWN,
     SCROLL_UP,
     LineEditor,
@@ -209,6 +210,12 @@ class Screen:
 
         The selection wraps at both ends: a list of eleven options is two
         presses from the bottom rather than nine, which on a keypad matters.
+
+        ``next`` selects as well as ``enter``. It means "finish this field and
+        go on", and a list has no fields — it is one choice — so on a screen
+        like this the two keys have to mean the same thing. A screen whose
+        legend names ``next`` is telling the truth rather than offering a key
+        that does nothing.
         """
         total = len(items)
         if total == 0:
@@ -253,7 +260,7 @@ class Screen:
                 index = (index - 1) % total
             elif key == SCROLL_DOWN:
                 index = (index + 1) % total
-            elif key == ENTER:
+            elif key == ENTER or key == NEXT:
                 return index
             elif key == CANCEL:
                 return None
@@ -338,6 +345,7 @@ class Screen:
         editor = LineEditor()
         strip = (
             (cap_for(ENTER), "OK"),
+            (cap_for(NEXT), "Next"),
             (cap_for(DEL), "Del"),
             (cap_for(CANCEL), "Back"),
         )
@@ -379,3 +387,131 @@ class Screen:
                 truncate(line, BODY_COLUMNS),
             )
         await self.render()
+
+    async def select_checkboxes(
+        self,
+        title: str,
+        items: list[str],
+        *,
+        index: int = 0,
+        legend: tuple[tuple[str, str], ...] | None = None,
+    ) -> tuple[list[bool], int] | tuple[None, None]:
+        """
+        Select multiple items with checkboxes.
+
+        ENTER/OK toggles the checkbox at the current position.
+        NEXT advances to the next step (returns current selection).
+        CANCEL cancels (returns None, None).
+
+        Returns (selected_list, last_index) or (None, None) if cancelled.
+        """
+        total = len(items)
+        if total == 0:
+            await self.message(title, ["Nothing to choose from."])
+            return None, None
+
+        selected = [False] * total
+        index = max(0, min(index, total - 1))
+        top = 0
+        strip = scroll_legend() if legend is None else legend
+
+        while True:
+            # Keep the selection on screen
+            if index < top:
+                top = index
+            elif index >= top + BODY_ROWS:
+                top = index - BODY_ROWS + 1
+            top = max(0, min(top, max(0, total - BODY_ROWS)))
+
+            self.frame(title, right=f"{index + 1}/{total}", legend=strip)
+
+            for slot in range(BODY_ROWS):
+                position = top + slot
+                if position >= total:
+                    break
+                y = self._body_row(slot)
+                is_highlighted = position == index
+                checkbox = "[x]" if selected[position] else "[ ]"
+                text = f"{checkbox} {items[position]}"
+
+                if is_highlighted:
+                    self.canvas.fill_rect(0, y, BODY_WIDTH, ROW_HEIGHT, True)
+                    self.canvas.text(TEXT_X, y + TEXT_OFFSET, truncate(text, BODY_COLUMNS), on=False)
+                else:
+                    self.canvas.text(TEXT_X, y + TEXT_OFFSET, truncate(text, BODY_COLUMNS), on=True)
+
+            self._scrollbar(top, BODY_ROWS, total)
+            await self.render()
+
+            key = await self._key()
+            if key == SCROLL_UP:
+                index = (index - 1) % total
+            elif key == SCROLL_DOWN:
+                index = (index + 1) % total
+            elif key == ENTER:
+                selected[index] = not selected[index]
+            elif key == NEXT:
+                return selected, index
+            elif key == CANCEL:
+                return None, None
+
+    async def select_list(
+        self,
+        title: str,
+        items: list[str],
+        *,
+        index: int = 0,
+        legend: tuple[tuple[str, str], ...] | None = None,
+    ) -> int | None:
+        """
+        Select one item from a list.
+
+        ENTER/OK/NEXT selects the item.
+        CANCEL cancels (returns None).
+
+        Returns the selected index or None if cancelled.
+        """
+        total = len(items)
+        if total == 0:
+            await self.message(title, ["Nothing to choose from."])
+            return None
+
+        index = max(0, min(index, total - 1))
+        top = 0
+        strip = scroll_legend() if legend is None else legend
+
+        while True:
+            if index < top:
+                top = index
+            elif index >= top + BODY_ROWS:
+                top = index - BODY_ROWS + 1
+            top = max(0, min(top, max(0, total - BODY_ROWS)))
+
+            self.frame(title, right=f"{index + 1}/{total}", legend=strip)
+
+            for slot in range(BODY_ROWS):
+                position = top + slot
+                if position >= total:
+                    break
+                y = self._body_row(slot)
+                is_highlighted = position == index
+                text = items[position]
+
+                if is_highlighted:
+                    self.canvas.fill_rect(0, y, BODY_WIDTH, ROW_HEIGHT, True)
+                    self.canvas.text(TEXT_X, y + TEXT_OFFSET, truncate(text, BODY_COLUMNS), on=False)
+                else:
+                    self.canvas.text(TEXT_X, y + TEXT_OFFSET, truncate(text, BODY_COLUMNS), on=True)
+
+            self._scrollbar(top, BODY_ROWS, total)
+            await self.render()
+
+            key = await self._key()
+            if key == SCROLL_UP:
+                index = (index - 1) % total
+            elif key == SCROLL_DOWN:
+                index = (index + 1) % total
+            elif key == ENTER or key == NEXT:
+                return index
+            elif key == CANCEL:
+                return None

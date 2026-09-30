@@ -33,7 +33,7 @@ SPI_DEVICE = 0
 
 # SPI clock speed for the ATtiny interface.
 
-SPI_SPEED = 1_000_000
+SPI_SPEED = 50_000
 
 # Current ATtiny SPI pins:
 
