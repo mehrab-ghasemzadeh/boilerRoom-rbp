@@ -41,10 +41,24 @@ OUT_PATH = os.path.join(ROOT, "src", "display_font_fa.py")
 
 FONT_PATH = "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf"
 
-# Rendering this many pixels tall for the em box. The row is 13 px, so the
-# glyph box is 12 px of ink plus a spare row of leading, which is what keeps a
-# descender off the row below.
-RENDER_PX = 10
+# Em size the glyphs are rasterised at. This is the one number that decides
+# whether Persian is legible here, and it was wrong at ten.
+#
+# Naskh puts a letter's dot very close to its body — a noon is a dot over a
+# bowl, with barely a hairline of daylight between them. At ten pixels that gap
+# is under a pixel wide, so averaging it away leaves the dot sitting *on* the
+# bowl: "خوانشها" reads as letters with the noon glued to its neighbour, which
+# is the single most obvious way Persian can look wrong.
+#
+# Eleven is the largest em the row allows. The tallest glyph, an alef with a
+# hamza, reaches ten rows above the baseline and the row is ten rows tall above
+# it, so eleven is the ceiling — and at eleven the gap above a noon is a whole
+# pixel, which is enough to keep the dot a dot. Going to twelve would look
+# better still and does not fit: the hamza alef would be clipped.
+#
+# The cost is width: every word grows by about eight percent, which the
+# 122 px body and 124 px title bar both have room for.
+RENDER_PX = 11
 
 # Naskh has thin strokes, and at ten pixels they fall between sample points: a
 # direct render loses the left arm of the beh and the result is a smudge. So
@@ -53,10 +67,149 @@ RENDER_PX = 10
 # the smallest factor that keeps every letter's shape intact.
 SUPERSAMPLE = 8
 
-# The threshold applied after averaging. Low on purpose: at this size a stroke
-# may cover well under half a pixel, and dropping it loses a letter feature
-# outright, while a little extra weight on a stem costs nothing at this scale.
+# The threshold applied after averaging. It is only the fallback: each glyph
+# searches for a cut that suits its own strokes, and uses this when the search
+# finds nothing better. Low on purpose — at this size a stroke may cover well
+# under half a pixel, and dropping it loses a letter feature outright.
 THRESHOLD = 60
+
+# How much ink a glyph may carry outside its main body. A dotted letter is one
+# piece of writing plus a dot, and a three-dot triangle is up to five pixels, so
+# more than this is not a dot: it is a piece of the letter that has been cut off,
+# or a dot that has been welded on.
+MAX_MARK_PIXELS = 6
+
+# Kaf and gaaf carry a mark of their own inside the letter — the little
+# "hamza" stroke — and it is several pixels rather than one, so they get a
+# larger allowance. Without this no cut can satisfy them and the search would
+# give up on two of the commonest letters in the language.
+MARK_BUDGET = {"ک": 11, "گ": 11}
+
+# The range of cuts the search looks at, lowest (fattest) first.
+THRESHOLD_SEARCH = tuple(range(34, 101, 2))
+
+
+
+def _components(mask: list[list[bool]], width: int, height: int) -> list[list[tuple[int, int]]]:
+    """The connected blobs of ink, four-connected, in a fixed order."""
+    seen = [[False] * width for _ in range(height)]
+    blobs = []
+    for y in range(height):
+        for x in range(width):
+            if not mask[y][x] or seen[y][x]:
+                continue
+            blob = []
+            stack = [(x, y)]
+            seen[y][x] = True
+            while stack:
+                cx, cy = stack.pop()
+                blob.append((cx, cy))
+                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    nx, ny = cx + dx, cy + dy
+                    if 0 <= nx < width and 0 <= ny < height and mask[ny][nx] and not seen[ny][nx]:
+                        seen[ny][nx] = True
+                        stack.append((nx, ny))
+            blobs.append(blob)
+    return blobs
+
+
+def _has_mark(
+    grey: list[list[int]], width: int, height: int, budget: int
+) -> bool:
+    """
+    Whether this glyph carries a dot, hamza or inner stroke of its own.
+
+    Asked of the glyph rather than of a table of letters, because a letter's
+    mark is not a property of the letter: a Persian yeh carries two dots on its
+    own and none once it joins, and a final heh is written bare. Whether the
+    mark is there is something the font knows and this file does not, so it is
+    measured — if any cut in the range leaves a small piece standing off the
+    body, the mark is present in the outline and has to be cut free of it.
+
+    Getting this wrong is not cosmetic. The noon of "خوانشها" is in its initial
+    form, and a dot welded to the letter it belongs to is precisely the fault
+    this whole exercise is about; a check that only looked at the isolated form
+    would pass it straight through.
+    """
+    for cut in THRESHOLD_SEARCH:
+        mask = [[grey[y][x] > cut for x in range(width)] for y in range(height)]
+        blobs = _components(mask, width, height)
+        if len(blobs) < 2:
+            continue
+        blobs.sort(key=len, reverse=True)
+        loose = sum(len(blob) for blob in blobs[1:])
+        if 0 < loose <= budget:
+            return True
+    return False
+
+
+def _choose_threshold(
+    grey: list[list[int]],
+    width: int,
+    height: int,
+    mark_expected: bool,
+    budget: int = MAX_MARK_PIXELS,
+) -> int:
+    """
+    Pick the cut that keeps this letter in one piece, minus its marks.
+
+    Naskh's strokes vary in weight within a single glyph, so no global cut
+    serves every letter: the cut that keeps a noon bowl whole is also the cut
+    that welds the dot above it onto the bowl, and raising it opens the gap and
+    breaks the bowl instead.
+
+    The cut is chosen per glyph instead. A letter is one piece of writing with
+    its dot or hamza standing off it, so a cut is acceptable when what is left
+    outside the main body is a mark's worth of pixels — and among the acceptable
+    cuts the one that makes the body heaviest wins, which is the lowest, because
+    more ink is a fatter stroke. That is the whole rule: never cut a letter in
+    half, never weld its dot on, never cut thinner than it has to be.
+    """
+    best_cut = None
+    best_body = -1
+    for cut in THRESHOLD_SEARCH:
+        mask = [[grey[y][x] > cut for x in range(width)] for y in range(height)]
+        blobs = _components(mask, width, height)
+        if not blobs:
+            continue
+        blobs.sort(key=len, reverse=True)
+        body = len(blobs[0])
+        leftover = sum(len(blob) for blob in blobs[1:])
+        if mark_expected:
+            # The mark has to end up standing clear of the letter, or the letter
+            # is missing its dot and no Persian reader can tell what it says.
+            if not 0 < leftover <= budget:
+                continue
+        elif leftover:
+            # Nothing should be detached from a letter that has no mark, so
+            # anything loose at all means this cut has broken the letter.
+            continue
+        if body > best_body:
+            best_cut, best_body = cut, body
+            break  # cuts ascend, so the first acceptable one is the fattest
+
+    if best_cut is not None:
+        return best_cut
+
+    # No cut satisfies the letter. Rather than give up and use the default,
+    # take the cut that leaves the most ink in the main body, which is the one
+    # that has broken off the least, and prefer one that has not split the
+    # letter at all. A handful of Naskh letters are too fine for this size to
+    # satisfy the rule, and this keeps their damage to a single stroke.
+    best = (0, 0, 0)
+    for cut in THRESHOLD_SEARCH:
+        mask = [[grey[y][x] > cut for x in range(width)] for y in range(height)]
+        blobs = _components(mask, width, height)
+        if not blobs:
+            continue
+        blobs.sort(key=len, reverse=True)
+        body = len(blobs[0])
+        leftover = sum(len(blob) for blob in blobs[1:])
+        # Fewest pieces first, then heaviest body, then least loose ink.
+        score = (-(len(blobs) - 1), body, -leftover)
+        if score > best:
+            best, best_cut = score, cut
+    return THRESHOLD if best_cut is None else best_cut
 
 # Where the pen sits while a glyph is rasterised, in panel pixels. Far from the
 # edge so nothing clips, and the same for every glyph so the left side bearing
@@ -211,19 +364,35 @@ def form_advance(face: hb.Face, font: hb.Font, letter: str, form: str) -> int:
     return max(1, round(advance))
 
 
-def rasterise(font_path: str, codepoint: int) -> tuple[tuple[int, ...], int, int] | None:
+def grey_for(letter: str, form: str, hb_font=None) -> tuple[list[list[int]], int, int] | None:
+    """The averaged coverage of one glyph, as (rows, width, height).
+
+    Exposed so the checker can ask the same question of the same glyph, in the
+    same way, rather than answering it a second and different way. An empty
+    result means the glyph has no ink at all.
     """
-    Draw one codepoint and return ``(columns, width, ascender)``.
+    if hb_font is None:
+        blob = hb.Blob.from_file_path(FONT_PATH)
+        hb_font = hb.Font(hb.Face(blob))
+    codepoint = form_codepoint(hb_font, letter, form)
+    rows, width, height, _pen, _ascender = _render_grey(FONT_PATH, codepoint)
+    return None if rows is None else (rows, width, height)
 
-    ``columns`` is one int per pixel column, bit 0 at the top of the glyph's ink.
-    ``ascender`` is how many rows the ink starts above the baseline, so the
-    caller can hang every glyph off one shared baseline: a letter that stops
-    short of the ascender costs no rows, and a descender cannot sink into the
-    row beneath it.
 
-    The glyph is drawn on its own rather than inside a probe word: a codepoint
-    that is already a presentation form is not reshaped by HarfBuzz, so
-    rendering it alone gives the same shape it would take in a word.
+def _render_grey(
+    font_path: str, codepoint: int
+) -> tuple[list[list[int]] | None, int, int, int, int]:
+    """
+    Draw one codepoint oversize, average it down, and return the coverage.
+
+    Returns ``(rows, width, height, pen, ascender)``. ``rows`` is the grey
+    coverage of the glyph's bounding box, one value per pixel, and nothing is
+    thresholded: the coverage is handed on so the cut can be chosen against it,
+    which is the whole point — deciding ink from one number for the whole font
+    is what welded the dots on in the first place.
+
+    ``ascender`` is how many rows the box starts above the baseline, so the
+    caller can hang every glyph off one shared baseline.
     """
     scale = SUPERSAMPLE
     font = ImageFont.truetype(font_path, RENDER_PX * scale)
@@ -241,26 +410,60 @@ def rasterise(font_path: str, codepoint: int) -> tuple[tuple[int, ...], int, int
         direction="rtl",
     )
 
-    # Average back down to panel scale, then crop to what survived the
-    # threshold. Cropping after is deliberate: it bounds the glyph to the ink
-    # the panel will actually show, which is what makes the widths correct.
-    canvas = canvas.resize(
-        (canvas.width // scale, canvas.height // scale), Image.BOX
-    )
+    # Average back down to panel scale. Cropping after is deliberate: it bounds
+    # the glyph to the ink the panel will actually show, which is what makes the
+    # widths correct.
+    canvas = canvas.resize((canvas.width // scale, canvas.height // scale), Image.BOX)
 
     pen = PEN_X
-    bbox = canvas.point(lambda value: 255 if value > THRESHOLD else 0).getbbox()
-    if bbox is None:  # space, or a codepoint this font has no glyph for
+    # Work out what survives on a loose cut first, so a faint but real stroke
+    # still counts and the glyph is not cropped away to nothing.
+    loose = canvas.point(lambda value: 255 if value > THRESHOLD else 0).getbbox()
+    if loose is None:  # space, or a codepoint this font has no glyph for
+        return None, 0, 0, pen, 0
+
+    left, top, right, bottom = loose
+    pixels = canvas.crop(loose).load()
+    width, height = right - left, bottom - top
+    rows = [[pixels[x, y] for x in range(width)] for y in range(height)]
+    return rows, width, height, pen, baseline_y // scale - top
+
+
+def rasterise(
+    font_path: str,
+    codepoint: int,
+    *,
+    mark_budget: int = MAX_MARK_PIXELS,
+) -> tuple[tuple[int, ...], int, int] | None:
+    """
+    Draw one codepoint and return ``(columns, width, ascender)``.
+
+    ``columns`` is one int per pixel column, bit 0 at the top of the glyph's ink.
+    ``ascender`` is how many rows the ink starts above the baseline, so the
+    caller can hang every glyph off one shared baseline: a letter that stops
+    short of the ascender costs no rows, and a descender cannot sink into the
+    row beneath it.
+
+    The glyph is drawn on its own rather than inside a probe word: a codepoint
+    that is already a presentation form is not reshaped by HarfBuzz, so
+    rendering it alone gives the same shape it would take in a word.
+    """
+    grey, width, height, pen, baseline_row = _render_grey(font_path, codepoint)
+    if grey is None:
         return None
 
-    left, top, right, bottom = bbox
-    pixels = canvas.crop(bbox).load()
+    cut = _choose_threshold(
+        grey, width, height, _has_mark(grey, width, height, mark_budget), mark_budget
+    )
+    mask = [[grey[y][x] > cut for x in range(width)] for y in range(height)]
+    if not any(any(row) for row in mask):  # everything too faint to keep
+        return None
 
     columns = []
-    for x in range(right - left):
+    for x in range(width):
         column = 0
-        for y in range(bottom - top):
-            if pixels[x, y] > THRESHOLD:
+        for y in range(height):
+            if mask[y][x]:
                 column |= 1 << y
         columns.append(column)
 
@@ -269,9 +472,41 @@ def rasterise(font_path: str, codepoint: int) -> tuple[tuple[int, ...], int, int
     # wider than its advance and overhangs its neighbour - so without this each
     # letter draws a pixel or two left of where it belongs and a joined word
     # comes out smeared together.
-    lsb = left - pen
+    lsb = 0 - pen
 
-    return tuple(columns), right - left, baseline_y // scale - top, lsb
+    return tuple(columns), width, baseline_row, lsb
+
+
+def _ink_extent(columns: tuple[int, ...]) -> tuple[int, int]:
+    """The ink's extent as (rows above the baseline, rows below it)."""
+    above = below = 0
+    for column in columns:
+        rows = [row for row in range(64) if column & (1 << row)]
+        if not rows:
+            continue
+        above = max(above, max(rows))
+        below = max(below, -min(rows) if min(rows) < 0 else 0)
+    return above, below
+
+
+def _check_fits(letter: str, form: str, columns: tuple[int, ...], ascender: int) -> None:
+    """
+    Refuse to emit a glyph that does not fit its row.
+
+    Silently clipping the top of the hamza alef would look like a font bug on
+    screen and be very hard to trace back to here, so an overflow stops the
+    build instead. The generator is the only place that knows both the em size
+    and the row it has to fit in, which makes it the only place this can be
+    checked honestly.
+    """
+    above, below = _ink_extent(columns)
+    depth = above - ascender + below
+    if above > BASELINE or depth > ROW_HEIGHT - BASELINE:
+        sys.exit(
+            f"glyph {letter!r}/{form} does not fit a {ROW_HEIGHT}px row: "
+            f"{above}px above the baseline, {depth}px below it "
+            f"(em {RENDER_PX}px, room {BASELINE}/{ROW_HEIGHT - BASELINE})"
+        )
 
 
 def build() -> str:
@@ -287,9 +522,14 @@ def build() -> str:
     for letter in LETTERS:
         for form in FORMS:
             codepoint = form_codepoint(hb_font, letter, form)
-            raster = rasterise(FONT_PATH, codepoint)
+            raster = rasterise(
+                FONT_PATH,
+                codepoint,
+                mark_budget=MARK_BUDGET.get(letter, MAX_MARK_PIXELS),
+            )
             if raster is not None:
                 columns, width, ascender, lsb = raster
+                _check_fits(letter, form, columns, ascender)
                 advance = form_advance(face, hb_font, letter, form)
                 table[(letter, form)] = (columns, width, ascender, advance, lsb)
 
@@ -298,6 +538,7 @@ def build() -> str:
         raster = rasterise(FONT_PATH, ord(digit))
         if raster is not None:
             columns, width, ascender, lsb = raster
+            _check_fits(digit, "isolated", columns, ascender)
             table[(digit, "isolated")] = (columns, width, ascender, width, lsb)
 
     # The lam-alef ligature, keyed by the two letters that spell it and taking
