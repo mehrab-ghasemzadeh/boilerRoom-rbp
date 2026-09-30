@@ -137,15 +137,6 @@ LIMITS_MENU = """
   0) Back
 > """
 
-SCHEDULE_MENU = """
-  1) Add a weekly rule
-  2) Remove a weekly rule
-  3) Add a date exception
-  4) Remove a date exception
-  5) Discard local edits (back to the published schedule)
-  0) Back
-> """
-
 # The same options as the blocks above, as (answer, short label). The terminal
 # reads the block; the display builds a selectable list from these. Labels are
 # written to fit twenty columns, which is what the panel has.
@@ -1851,45 +1842,6 @@ async def _discard_local_edits(state: RuntimeState) -> None:
 
 async def _schedule_editor_menu(state: RuntimeState) -> None:
     """
-    Change the heating programme from the device.
-
-    The same reasoning as option 7: an operator standing in the boiler room
-    should not need the cloud to change how the boilers run. Edits hold until
-    the server publishes a schedule, which then wins.
-    """
-    while not state.shutdown.is_set():
-        _set_context("Schedule")
-        await _schedule_status(state)
-
-        try:
-            choice = await _choose(state, "Schedule", SCHEDULE_ITEMS, SCHEDULE_MENU)
-        except EOFError:
-            state.shutdown.set()
-            return
-
-        _set_context(_label_for(SCHEDULE_ITEMS, choice, "Schedule"))
-
-        if choice == "1":
-            await _add_weekly_rule(state)
-        elif choice == "2":
-            await _remove_weekly_rule(state)
-        elif choice == "3":
-            await _add_exception(state)
-        elif choice == "4":
-            await _remove_exception(state)
-        elif choice == "5":
-            await _discard_local_edits(state)
-        elif choice in ("0", "", BACK):
-            await state.echo("")
-            return
-        else:
-            await state.echo(f"\n[menu] Unknown option: {choice!r}\n")
-
-        await _flush_page(state)
-
-
-async def _schedule_editor_menu_v2(state: RuntimeState) -> None:
-    """
     Change the heating programme from the device - table-based UI.
 
     Shows the four main actions as a selectable table.
@@ -1897,7 +1849,7 @@ async def _schedule_editor_menu_v2(state: RuntimeState) -> None:
     view = screen()
     if view is None:
         # Terminal fallback: use the original menu
-        await _schedule_editor_menu(state)
+        await _schedule_editor_menu_terminal(state)
         return
 
     legend = (
@@ -2611,7 +2563,7 @@ async def _handle_choice(state: RuntimeState, choice: str) -> None:
     elif choice == "8":
         await _reload_mapping(state)
     elif choice == "9":
-        await _schedule_editor_menu(state)
+        await _schedule_editor_menu_v2(state)
     elif choice == "10":
         await _temperature_menu(state)
     elif choice == "11":
