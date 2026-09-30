@@ -87,6 +87,18 @@ _INVISIBLE = frozenset("‌‍‎‏⁦⁧⁨⁩")
 # overwhelming majority of what this device draws is ASCII.
 _RTL_FROM = 0x0590
 
+# Characters that look Persian by codepoint but must still be drawn left to
+# right, because they are numbers and a number reads the same either way round
+# only if you do not reverse it. Persian and Arabic-Indic digits live inside the
+# Arabic block, so a plain codepoint test would swallow them into a reversed
+# run and turn 135 into 531.
+#
+# The test is the Unicode bidi class rather than a codepoint list: EN is a
+# European or Arabic-Indic digit, AN an Arabic-Indic number. Both are numbers,
+# and both keep their order. Doing this by class means a digit nobody thought
+# about is still a digit.
+_NUMBER_CLASSES = ("EN", "AN")
+
 
 class Piece:
     """
@@ -124,6 +136,26 @@ class Piece:
 def has_rtl(text: str) -> bool:
     """True when ``text`` holds anything this module has to reorder."""
     return any(ord(character) >= _RTL_FROM for character in text)
+
+
+def _is_rtl_letter(character: str) -> bool:
+    """
+    Is this a Persian letter that needs reversing?
+
+    A codepoint test is not enough. The Arabic block contains the Arabic-Indic
+    and Persian digits alongside the letters, and a digit is a number: it reads
+    135, not 531, whichever script it is written in. So the number classes are
+    excluded here, and a number keeps its order whether or not the line around
+    it is Persian.
+
+    Diacritics, which are combining and take their shape from the letter they
+    sit on, count as letters so they stay inside the run they belong to.
+    """
+    if character.isdigit():
+        return False
+    if unicodedata.bidirectional(character) in _NUMBER_CLASSES:
+        return False
+    return ord(character) >= _RTL_FROM
 
 
 def _joins_forward(letter: str) -> bool:
@@ -298,7 +330,7 @@ def _runs(text: str) -> list[tuple[bool, str]]:
             # space that follows them in "خوانش‌ها" is what ends the run.
             continue
 
-        rtl = ord(character) >= _RTL_FROM
+        rtl = _is_rtl_letter(character)
         if current_rtl is None or rtl == current_rtl:
             current.append(character)
             current_rtl = rtl
@@ -359,28 +391,35 @@ def shape(text: str) -> list[Piece]:
     rtl_paragraph = _base_direction(text)
 
     pieces: list[Piece] = []
+    groups: list[list[Piece]] = []
+
     for is_rtl, run in runs:
         if is_rtl:
-            pieces.extend(_shape_rtl_run(run))
+            # Already in visual order: the first letter of the word is the
+            # rightmost one, because that is where reading starts.
+            group = _shape_rtl_run(run)
         elif run == " ":
-            pieces.append(Piece(" ", "isolated", (), 0, 0, 3, rtl=False))
+            group = [Piece(" ", "isolated", (), 0, 0, 3, rtl=False)]
         else:
             # ASCII and digits, drawn left to right exactly as typed.
+            group = []
             for character in run:
                 piece = _piece(character, "isolated", rtl=False)
                 if piece is None:
                     piece = Piece(character, "isolated", (), 0, 0, 5, rtl=False)
-                pieces.append(piece)
+                group.append(piece)
 
-    if rtl_paragraph:
-        # Reorder the runs, not the pieces: a number keeps its digits in order
-        # while moving to the other side of the line.
-        grouped: list[list[Piece]] = [[]]
-        for piece in pieces:
-            if piece.rtl and grouped[-1]:
-                grouped.append([])
-            grouped[-1].append(piece)
-        pieces = [piece for group in reversed(grouped) for piece in group]
+        groups.append(group)
+        pieces.extend(group)
+
+    if rtl_paragraph and len(groups) > 1:
+        # Reverse the order of the runs, and only the runs. Each run's letters
+        # are already in the right order for drawing, so reversing them again
+        # here would undo the shaping and lay the word out backwards. What does
+        # need reversing is which run comes first: in a right-to-left line the
+        # first run is the rightmost one, so "دمای آب: 68" puts its number at
+        # the left-hand end where the end of the line is.
+        pieces = [piece for group in reversed(groups) for piece in group]
 
     return pieces
 
