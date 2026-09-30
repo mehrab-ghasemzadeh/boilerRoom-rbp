@@ -158,52 +158,38 @@ def _is_rtl_letter(character: str) -> bool:
     return ord(character) >= _RTL_FROM
 
 
-def _joins_forward(letter: str) -> bool:
-    """Can ``letter`` connect to the one after it?"""
+def _connects_to_next(letter: str) -> bool:
+    """
+    Can ``letter`` connect to the one that follows it?
+
+    Only a dual-joining letter can. A right-joining letter — alef, dal, ra, za,
+    waw and the rest — draws its tail down and away, so nothing joins onto its
+    left-hand side. That is the whole reason ر ends a word in its final form
+    rather than carrying a letter after it.
+    """
+    return _JOINING.get(letter, "U") in ("D", "L")
+
+
+def _is_ligature(token: str) -> bool:
+    """Is this token a lam-alef pair rather than a single letter?"""
+    return len(token) == 2
+
+
+def _connects_to_previous(letter: str) -> bool:
+    """
+    Can the letter before ``letter`` connect onto it?
+
+    Both dual- and right-joining letters accept a join on this side: a
+    right-joining letter is precisely one that connects to the letter on its
+    right and to nothing else. So ر at the end of a word takes a final form
+    because it is joined from the letter before it.
+
+    A lam-alef ligature accepts one too. That is why the letter in front of a
+    "لا" takes an initial form: the ligature's lam reaches back to it.
+    """
+    if _is_ligature(letter):
+        return True
     return _JOINING.get(letter, "U") in ("D", "R")
-
-
-def _joins_backward(letter: str) -> bool:
-    """Can the one before ``letter`` connect to it?"""
-    return _JOINING.get(letter, "U") == "D"
-
-
-def _neighbours(letters: list[str], index: int) -> tuple[str | None, str | None]:
-    """
-    The nearest letters either side, skipping anything non-joining.
-
-    Persian text here carries no diacritics — the panel has no room for them and
-    the UI does not use them — so a single skip is enough. Skipping spaces
-    matters: "ب ت" must not join across the space.
-    """
-    before = letters[index - 1] if index > 0 else None
-    after = letters[index + 1] if index + 1 < len(letters) else None
-    return before, after
-
-
-def _form_for(letters: list[str], index: int) -> str:
-    """Which of the four shapes this letter takes, given its neighbours."""
-    letter = letters[index]
-    before, after = _neighbours(letters, index)
-
-    joined_left = (
-        before is not None
-        and _joins_forward(before)
-        and _joins_backward(letter)
-    )
-    joined_right = (
-        after is not None
-        and _joins_forward(letter)
-        and _joins_backward(after)
-    )
-
-    if joined_left and joined_right:
-        return "medial"
-    if joined_left:
-        return "final"
-    if joined_right:
-        return "initial"
-    return "isolated"
 
 
 def _ascii_piece(character: str) -> Piece:
@@ -266,6 +252,30 @@ def _ligature_at(letters: list[str], index: int) -> tuple[str, int] | None:
     return (pair, 2) if _glyph(pair, "isolated") is not None else None
 
 
+def _tokens(letters: list[str]) -> list[str]:
+    """
+    Collapse lam-alef into single tokens.
+
+    The ligature is one joined shape, and it accepts a join from the letter
+    before it exactly as a letter does. Shaping each letter against this list
+    rather than against the raw characters is what makes the letter in front of
+    a lam-alef take its initial form: without it, "بلا" gives a beh that was
+    told it had nothing to join to and comes out isolated and detached.
+    """
+    tokens: list[str] = []
+    index = 0
+    while index < len(letters):
+        ligature = _ligature_at(letters, index)
+        if ligature is not None:
+            pair, size = ligature
+            tokens.append(pair)
+            index += size
+            continue
+        tokens.append(letters[index])
+        index += 1
+    return tokens
+
+
 def _shape_rtl_run(run: str) -> list[Piece]:
     """
     Shape one right-to-left run and return it in *drawing* order.
@@ -275,32 +285,54 @@ def _shape_rtl_run(run: str) -> list[Piece]:
     reversed on the way out so the canvas can walk it left to right.
     """
     letters = list(run)
+    tokens = _tokens(letters)
     shaped = []
 
-    index = 0
-    while index < len(letters):
-        ligature = _ligature_at(letters, index)
-        if ligature is not None:
-            pair, size = ligature
-            before = letters[index - 1] if index > 0 else None
-            # The ligature joins to the letter before it and never to the one
-            # after, because the alef sits at that end.
-            form = "final" if before is not None and _joins_forward(before) else "isolated"
-            piece = _piece(pair, form, rtl=True)
-            if piece is not None:
-                shaped.append(piece)
-            index += size
-            continue
+    for position, token in enumerate(tokens):
+        before = tokens[position - 1] if position > 0 else None
+        after = tokens[position + 1] if position + 1 < len(tokens) else None
 
-        form = _form_for(letters, index)
-        piece = _piece(letters[index], form, rtl=True)
+        if _is_ligature(token):
+            # The ligature joins to the letter before it and never to the one
+            # after, because the alef sits at that end and an alef does not
+            # connect forwards.
+            form = (
+                "final"
+                if before is not None and _connects_to_next(before)
+                else "isolated"
+            )
+        else:
+            # A join exists only when both letters are willing: the one joining
+            # has to reach out, and the one being joined has to accept. The
+            # token before this letter may be a ligature, which accepts a join
+            # the same way a letter does.
+            joined_before = (
+                before is not None
+                and _connects_to_next(before)
+                and _connects_to_previous(token)
+            )
+            joined_after = (
+                after is not None
+                and _connects_to_next(token)
+                and _connects_to_previous(after)
+            )
+
+            if joined_before and joined_after:
+                form = "medial"
+            elif joined_before:
+                form = "final"
+            elif joined_after:
+                form = "initial"
+            else:
+                form = "isolated"
+
+        piece = _piece(token, form, rtl=True)
         if piece is None:
             # Nothing to draw for this codepoint. A space is the expected case;
             # anything else would be a letter missing from the glyph table.
-            shaped.append(Piece(letters[index], form, (), 0, 0, _GAP, rtl=True))
+            shaped.append(Piece(token, form, (), 0, 0, _GAP, rtl=True))
         else:
             shaped.append(piece)
-        index += 1
 
     shaped.reverse()
     return shaped
