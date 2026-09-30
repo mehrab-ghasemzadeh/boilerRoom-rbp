@@ -1161,7 +1161,7 @@ async def _add_weekly_rule_v2(state: RuntimeState) -> None:
         return
 
     # Step 3: Select start hour
-    start_hour = await _select_time_component(state, view, "Start hour", 0, 23)
+    start_hour = await _select_time_component(state, view, "Start hour", (0, 23))
     if start_hour is None:
         return
 
@@ -1171,7 +1171,7 @@ async def _add_weekly_rule_v2(state: RuntimeState) -> None:
         return
 
     # Step 5: Select end hour
-    end_hour = await _select_time_component(state, view, "End hour", 0, 23)
+    end_hour = await _select_time_component(state, view, "End hour", (0, 23))
     if end_hour is None:
         return
 
@@ -1556,7 +1556,7 @@ async def _add_exception_v2(state: RuntimeState) -> None:
     if start_day is None:
         return
 
-    start_hour = await _select_time_component(state, view, "Start hour", 0, 23)
+    start_hour = await _select_time_component(state, view, "Start hour", (0, 23))
     if start_hour is None:
         return
 
@@ -1577,7 +1577,7 @@ async def _add_exception_v2(state: RuntimeState) -> None:
     if end_day is None:
         return
 
-    end_hour = await _select_time_component(state, view, "End hour", 0, 23)
+    end_hour = await _select_time_component(state, view, "End hour", (0, 23))
     if end_hour is None:
         return
 
