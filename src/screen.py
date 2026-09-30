@@ -509,13 +509,19 @@ def _clock_text() -> str:
     """
     The time for the title bar, as HH:MM.
 
-    The device has no real-time clock: every timestamp it keeps comes from the
-    system clock, which is UTC, so that is what the bar shows and the readings
-    line agrees with it. Twenty-four hours rather than twelve, because a clock
-    on a heating panel is read in the evening as often as the morning and an
-    AM/PM flag is three pixels nobody can read at this size.
+    Local wall-clock time, not UTC. Everything the device *stores* is UTC and
+    stays that way, but the bar is for the person standing in front of it: a
+    header reading 16:38 in the evening reads as a device that has stopped
+    rather than one that is correct. Twenty-four hours rather than twelve,
+    because a clock on a heating panel is read in the evening as often as the
+    morning and an AM/PM flag is three pixels nobody can read at this size.
+
+    This depends on the Pi's own timezone being set, since that is what "local"
+    means here. Schedule times come from the server in the *schedule's*
+    timezone, so on a box left on UTC this bar will not match them; that is
+    worth fixing on the device rather than working around in the panel.
     """
-    return datetime.datetime.now(datetime.UTC).strftime("%H:%M")
+    return datetime.datetime.now().strftime("%H:%M")
 
 
 def _translate_line(text: str) -> str:
