@@ -34,6 +34,8 @@ menu builds them.
 
 from __future__ import annotations
 
+import datetime
+
 from text_shaper import has_rtl
 from display_canvas import (
     Canvas,
@@ -503,6 +505,19 @@ FA_FRAGMENTS = (
 )
 
 
+def _clock_text() -> str:
+    """
+    The time for the title bar, as HH:MM.
+
+    The device has no real-time clock: every timestamp it keeps comes from the
+    system clock, which is UTC, so that is what the bar shows and the readings
+    line agrees with it. Twenty-four hours rather than twelve, because a clock
+    on a heating panel is read in the evening as often as the morning and an
+    AM/PM flag is three pixels nobody can read at this size.
+    """
+    return datetime.datetime.now(datetime.UTC).strftime("%H:%M")
+
+
 def _translate_line(text: str) -> str:
     """
     The Persian form of a body line, or the line unchanged.
@@ -587,21 +602,48 @@ class Screen:
         right: str = "",
         legend: tuple[tuple[str, str], ...] = (),
     ) -> None:
-        """Clear the canvas and draw the title bar and legend strip."""
+        """
+        Clear the canvas and draw the title bar and legend strip.
+
+        The bar carries the page title and the time, which is what an operator
+        standing in front of it needs to know: where they are and how late it
+        is. They are placed from opposite ends of the bar and the title is cut
+        to whatever room is left, so the two can never overlap however long the
+        title or however long the counter beside it turns out to be.
+        """
         canvas = self.canvas
         canvas.clear()
         title = FA_TITLES.get(title, title)
 
         canvas.fill_rect(0, 0, WIDTH, TITLE_HEIGHT, True)
-        room = BAR_COLUMNS
-        if right:
-            room = max(1, BAR_COLUMNS - text_width(right) - 4)
-            canvas.text_right(WIDTH - TEXT_X, 0, right, on=False)
+
+        clock = _clock_text()
+        counter = right
+        # Width taken off the title's end before anything is drawn: the clock,
+        # the counter if there is one, and a gap either side of each so neither
+        # touches the title's last letter.
+        used = text_width(clock)
+        if counter:
+            used += text_width(counter) + 2
+        room = max(0, BAR_COLUMNS - used - 4)
         shown = truncate(title.upper(), room)
-        if has_rtl(shown):
+
+        rtl = has_rtl(shown)
+        # The title sits on the side the reader starts from and the clock on the
+        # side they finish, which for Persian is the right and the left. The
+        # counter hugs the clock: it qualifies the list, not the page.
+        if rtl:
             canvas.text_right(WIDTH - TEXT_X, 0, shown, on=False)
+            canvas.text(TEXT_X, 0, clock, on=False)
+            if counter:
+                canvas.text(TEXT_X + text_width(clock) + 2, 0, counter, on=False)
         else:
             canvas.text(TEXT_X, 0, shown, on=False)
+            canvas.text_right(WIDTH - TEXT_X, 0, clock, on=False)
+            if counter:
+                canvas.text_right(
+                    WIDTH - TEXT_X - text_width(clock) - 2, 0, counter, on=False
+                )
 
         self._legend(legend)
 
