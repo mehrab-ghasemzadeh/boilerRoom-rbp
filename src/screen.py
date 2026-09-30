@@ -115,6 +115,17 @@ FA_LABELS = {
     "No": "خیر",
     "On": "روشن",
     "Off": "خاموش",
+    "Open": "باز کردن",
+    "Status": "وضعیت",
+    "Cancel": "انصراف",
+    "Change": "تغییر",
+    "Del": "حذف",
+    "Delete": "حذف",
+    "Next": "بعدی",
+    "Select": "انتخاب",
+    "Set": "تعیین",
+    "Toggle": "تغییر",
+    "View": "مشاهده",
 }
 
 # Titles the panel draws in Persian, keyed by the English title passed in. The
@@ -141,6 +152,19 @@ FA_TITLES = {
     "No days": "بدون روز",
     "No rules": "بدون قانون",
     "No exceptions": "بدون استثنا",
+    "Sign in": "ورود",
+    "Change schedule": "تغییر زمان‌بندی",
+    "Active schedule": "زمان‌بندی فعال",
+    "Confirm delete": "تأیید حذف",
+    "Delete weekly rule": "حذف قانون هفتگی",
+    "Delete exception": "حذف استثنا",
+    "Exception": "استثنا",
+    "Mode for": "حالت برای",
+    "Rule": "قانون",
+    "Stop the agent?": "عامل متوقف شود؟",
+    "Select days": "انتخاب روزها",
+    "Select targets": "انتخاب هدف‌ها",
+    "Switch state": "تغییر وضعیت",
 }
 
 # Lines that are fixed text on the panel rather than data the menu formats.
@@ -162,6 +186,130 @@ FA_LINES = {
     "No more weekly rules.": "قانون هفتگی دیگری نیست.",
     "Nothing to choose from.": "موردی برای انتخاب نیست.",
     "Mode reported to the server.": "حالت به سرور ارسال شد.",
+    # Startup and shutdown.
+    "Shutting down ...": "در حال خاموش کردن ...",
+    "Equipment units:": "واحدهای تجهیزات:",
+    "Relay states:": "وضعیت رله‌ها:",
+    "Relays:": "رله‌ها:",
+    "Temperature sensors:": "حسگرهای دما:",
+    "Unit modes:": "حالت واحدها:",
+    "Targets:": "هدف‌ها:",
+    "No readings yet.": "هنوز خوانشی نیست.",
+    "No boilers in the device mapping.": "دیگی در نگاشت دستگاه نیست.",
+    "No boiler has its own temperature set.": "برای هیچ دیگی دمای مستقل تعیین نشده است.",
+    "Relay controller not available.": "کنترلر رله در دسترس نیست.",
+    # Config and connection details.
+    "API base URL:": "نشانی پایه API:",
+    "WebSocket URL:": "نشانی WebSocket:",
+    "Device username:": "نام کاربری دستگاه:",
+    "Device ID:": "شناسه دستگاه:",
+    "Read interval:": "بازه خواندن:",
+    "Telemetry every:": "گزارش هر:",
+    "Mapping source:": "منبع نگاشت:",
+    "Mapping file:": "فایل نگاشت:",
+    "Authenticated:": "احراز هویت:",
+    "WebSocket:": "WebSocket:",
+    "Database:": "پایگاه داده:",
+    "Database: unavailable (": "پایگاه داده: در دسترس نیست (",
+    "Outbox:   empty (": "صندوق خروجی: خالی (",
+    "Active config:    v": "پیکربندی فعال:    v",
+    "Desired config:   v": "پیکربندی خواسته:   v",
+    "schedule: v": "زمان‌بندی: v",
+    "(not set)": "(تعیین نشده)",
+    "(not logged in)": "(وارد نشده)",
+    "connected": "متصل",
+    "disconnected": "قطع",
+    # Reading and schedule prose.
+    "Last readings at": "آخرین خوانش‌ها در",
+    "(cycle": "(چرخه",
+    "Scheduling rules:": "قوانین زمان‌بندی:",
+    "Schedule v": "زمان‌بندی v",
+    "Schedule updated —": "زمان‌بندی به‌روزرسانی شد —",
+    "Now running a locally edited v": "اکنون نسخه محلی ویرایش‌شده v اجرا می‌شود",
+    "locally edited (revision": "ویرایش محلی (بازنگری",
+    ", on top of published v": "، بر پایه نسخه منتشرشده v",
+    "Back to the published schedule v": "بازگشت به زمان‌بندی منتشرشده v",
+    "Back to the published config v": "بازگشت به پیکربندی منتشرشده v",
+    ". This is now the room's schedule, not a local edit.": ". اکنون زمان‌بندی اتاق است، نه ویرایش محلی.",
+    "Published — the server created schedule v": "منتشر شد — سرور زمان‌بندی v ساخت",
+    "Publishing to the server ...": "در حال ارسال به سرور ...",
+    "is already": "هم‌اکنون",
+    "is now": "اکنون",
+    "Invalid mode.": "حالت نامعتبر است.",
+    "Invalid relay ID.": "شناسه رله نامعتبر است.",
+    "Invalid selection.": "انتخاب نامعتبر است.",
+    "Cancelled.": "لغو شد.",
+    "Rejected:": "رد شد:",
+    "The server refused it:": "سرور آن را نپذیرفت:",
+    "is not a number from the list.": "شماره‌ای از فهرست نیست.",
+    "There is no target": "هدفی وجود ندارد",
+    "Unknown option:": "گزینه ناشناخته:",
+    # Limits.
+    "Limits (published config v": "حدود (پیکربندی منتشرشده v",
+    "Limits updated —": "حدود به‌روزرسانی شد —",
+    "Now running locally edited limits on v": "اکنون حدود ویرایش محلی روی v اجرا می‌شود",
+    "There are no local limit edits to discard.": "ویرایش محلی حدی برای کنار گذاشتن نیست.",
+    "There are no local edits to discard.": "ویرایش محلی برای کنار گذاشتن نیست.",
+    "is cut off by a temperature limit (": "به‌وسیله حد دما قطع می‌شود (",
+    ") — refusing to switch it on.": ") — روشن کردن آن انجام نمی‌شود.",
+    "). The server's next publish replaces it.": "). انتشار بعدی سرور آن را جایگزین می‌کند.",
+    "). The server's next publish replaces them.": "). انتشار بعدی سرور آن‌ها را جایگزین می‌کند.",
+    "now follows the device-wide limit.": "اکنون از حد سراسری دستگاه پیروی می‌کند.",
+    # Offline and warning prose.
+    "No answer from the server — the change is running here and will be published when the device reconnects.":
+        "پاسخی از سرور نیامد — تغییر اینجا اجرا می‌شود و با اتصال دوباره دستگاه منتشر خواهد شد.",
+    "Offline — the mode will be reported when the device reconnects.":
+        "آفلاین — حالت با اتصال دوباره دستگاه گزارش می‌شود.",
+    "The change is still running here, and will be offered again on the next connection.":
+        "تغییر همچنان اینجا اجرا می‌شود و در اتصال بعدی دوباره ارسال خواهد شد.",
+    "The config changed while you were editing it — most likely the server published one. Nothing was saved; take another look and try again.":
+        "پیکربندی هنگام ویرایش تغییر کرد — به‌احتمال زیاد سرور یکی منتشر کرده است. چیزی ذخیره نشد؛ دوباره نگاه کنید و تلاش کنید.",
+    "The schedule changed while you were editing it — most likely the server published one. Nothing was saved; take another look and try again.":
+        "زمان‌بندی هنگام ویرایش تغییر کرد — به‌احتمال زیاد سرور یکی منتشر کرده است. چیزی ذخیره نشد؛ دوباره نگاه کنید و تلاش کنید.",
+    "No schedule yet — adding a rule starts one on this device.":
+        "هنوز زمان‌بندی نیست — افزودن قانون یکی روی این دستگاه می‌سازد.",
+    "No config yet — setting a limit starts one on this device.":
+        "هنوز پیکربندی نیست — تعیین حد یکی روی این دستگاه می‌سازد.",
+    "Note: the server keeps the last temperature it was given; this only changes what this device holds the boiler at.":
+        "توجه: سرور آخرین دمای دریافتی را نگه می‌دارد؛ این تنها دمای نگه‌داشته‌شده توسط این دستگاه را تغییر می‌دهد.",
+    "WARNING: it could not be written to disk, so it will not survive a restart.":
+        "هشدار: روی دیسک نوشته نشد، بنابراین پس از راه‌اندازی دوباره باقی نمی‌ماند.",
+    "WARNING: they could not be written to disk, so they will not survive a restart.":
+        "هشدار: روی دیسک نوشته نشدند، بنابراین پس از راه‌اندازی دوباره باقی نمی‌مانند.",
+    "— enter a number (sensor polling continues in background).":
+        "— یک شماره وارد کنید (نمونه‌برداری حسگر در پس‌زمینه ادامه دارد).",
+    "Reported to the server.": "به سرور ارسال شد.",
+    "Local edits discarded. Nothing has ever been published to this device, so no programme is driving the relays — they stay where they are until the server sends one.":
+        "ویرایش‌های محلی کنار گذاشته شد. هرگز چیزی برای این دستگاه منتشر نشده است، بنابراین هیچ برنامه‌ای رله‌ها را هدایت نمی‌کند — تا زمانی که سرور برنامه‌ای بفرستد در وضعیت کنونی می‌مانند.",
+    "Local limits discarded. Nothing has ever been published to this device, so there are now NO temperature limits and no over-temperature cut until the server sends one.":
+        "حدود محلی کنار گذاشته شد. هرگز چیزی برای این دستگاه منتشر نشده است، بنابراین اکنون هیچ حد دمایی و هیچ قطع بیش‌ازحد دما وجود ندارد تا سرور یکی بفرستد.",
+    "Control menu ready on the": "منوی کنترل آماده روی",
+    "App configuration:": "پیکربندی برنامه:",
+    "Boiler temperatures:": "دماهای دیگ:",
+    "No boilers or pumps in the device mapping.": "دیگ یا پمپی در نگاشت دستگاه نیست.",
+    "Reported": "ارسال شد",
+    # Unit and protocol fragments shown beside a value.
+    "Boiler": "دیگ",
+    "Relay": "رله",
+    "Sensor": "حسگر",
+    "days": "روز",
+    "rows from": "ردیف از",
+    "recovered post(s) on record)": "پیام بازیابی‌شده در سابقه)",
+    "KB, keeping": "کیلوبایت، نگه‌داشتن",
+    ", GPIO": "، GPIO",
+    ": unavailable": ": در دسترس نیست",
+    ") boiler": ") دیگ",
+    "(revision": "(بازنگری",
+    "-> manual; the schedule will leave it alone until you set it back.":
+        "-> دستی؛ زمان‌بندی تا بازگرداندن آن به‌حالت خودکار دست نمی‌زند.",
+    "WS hello_ack:     yes (server_time=": "WS hello_ack:     بله (server_time=",
+    "Boiler Room Monitoring System Started": "سامانه پایش اتاق دیگ آغاز شد",
+    "Temperature sensor mapping:": "نگاشت حسگرهای دما:",
+    "Relay mapping:": "نگاشت رله‌ها:",
+    "No device mapping yet — this device's wiring comes from the server":
+        "هنوز نگاشت دستگاهی نیست — سیم‌کشی این دستگاه از سابقه سرور می‌آید.",
+    "record. Sensors and relays stay idle until it arrives.":
+        "حسگرها و رله‌ها تا رسیدن آن بی‌کار می‌مانند.",
 }
 
 

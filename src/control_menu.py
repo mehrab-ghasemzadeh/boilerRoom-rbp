@@ -3244,10 +3244,10 @@ async def _run_menu_loop(state: RuntimeState, device) -> None:
                 await _show_status(state)
                 continue
 
-            _set_context("Main menu")
+            _set_context("Menu")
             choice = await _choose(
                 state,
-                "Main menu",
+                "Menu",
                 MAIN_ITEMS,
                 MENU,
                 hide_back=False,
