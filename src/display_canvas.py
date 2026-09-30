@@ -282,8 +282,14 @@ def wrap(text: str, pixels: int) -> list[str]:
     if text_width(text) <= pixels:
         return [text]
 
+    # The continuation indent is measured in pixels, because that is the unit
+    # everything above is measured in, and it is built as a number of spaces
+    # that comes to roughly that width. Deriving the space *count* from a pixel
+    # width and then spending it as pixels leaves a prefix wider than the row it
+    # is supposed to fit, which is how a wrap ends up unable to place even one
+    # character and never terminates.
     indent = text_width(text) - text_width(text.lstrip())
-    continuation = " " * min(indent + 2, max(0, pixels - 4))
+    continuation = " " * min(max(1, (indent + 4) // CELL_WIDTH), max(0, pixels // CELL_WIDTH - 1))
 
     lines: list[str] = []
     remaining = text
@@ -291,7 +297,10 @@ def wrap(text: str, pixels: int) -> list[str]:
 
     while remaining:
         room = pixels - text_width(prefix)
-        if room <= 0:  # pathological indentation; give up on it
+        if room < CELL_WIDTH:
+            # The indent has eaten the row. Nothing can be placed after it, so
+            # drop it rather than spin: this is what keeps the loop finite even
+            # for a line that cannot fit at all.
             prefix = ""
             room = pixels
 
@@ -314,8 +323,15 @@ def wrap(text: str, pixels: int) -> list[str]:
             lines.append(prefix + remaining[:space].rstrip())
             remaining = remaining[space:].lstrip()
         else:
-            lines.append(prefix + remaining[:cut].rstrip())
-            remaining = remaining[cut:].lstrip()
+            # Guarantee progress. If not one character fits on its own, place
+            # one anyway and let the caller truncate it: a line that cannot fit
+            # should overflow visibly, not hang.
+            if cut <= 0:
+                lines.append(prefix + remaining[0])
+                remaining = remaining[1:].lstrip()
+            else:
+                lines.append(prefix + remaining[:cut].rstrip())
+                remaining = remaining[cut:].lstrip()
         prefix = continuation
 
     return lines or [""]

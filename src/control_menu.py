@@ -68,7 +68,7 @@ from setpoint_store import (
 )
 from device_config import ConfigError, config_store, describe as describe_config
 from display_font import DEGREE
-from display_canvas import truncate, wrap
+from display_canvas import text_width, truncate, wrap
 from keypad_layout import CANCEL, ENTER, NEXT, cap_for
 from mapping_provider import DEFAULT_MAPPING_PATH
 from limits_guard import limit_guard
@@ -2045,15 +2045,19 @@ def _unit_label(target: Target) -> str:
 
 def _temperature_row(label: str, shown: str) -> str:
     """
-    ``Boiler 1 - 70°C``, on twenty columns.
+    ``Boiler 1 - 70°C``, on a 122 px row.
 
     The temperature is the answer, so it keeps its place and the name gives
     way: a mapping may call a unit something long, and a row that has had its
     number truncated off the end has thrown away the only part of it that was
     new.
+
+    The budget is in pixels, not characters. A Persian label is variable width,
+    so a row budget spent in characters either overflows the panel or wastes
+    most of the row.
     """
-    room = BODY_COLUMNS - len(shown) - len(" - ")
-    if len(label) > room:
+    room = BODY_COLUMNS - text_width(shown) - text_width(" - ")
+    if text_width(label) > room:
         label = truncate(label, max(1, room))
     return f"{label} - {shown}"
 
