@@ -101,6 +101,36 @@ ROLE_TARGET = {role: kind for kind, role in TARGET_ROLE.items()}
 # Day index -> name for display
 REVERSE_DAYS = {index: name for name, index in WEEKDAYS.items()}
 
+# Weekday names as the panel shows them. The schedule stores full English names
+# and the rows are built from the first three of them, which is "mon" rather
+# than anything an operator can read on a Persian panel, so the abbreviation is
+# translated here rather than left to a string substitution further downstream
+# that cannot see inside an f-string.
+FA_WEEKDAYS = {
+    "mon": "دوشنبه",
+    "tue": "سه‌شنبه",
+    "wed": "چهارشنبه",
+    "thu": "پنج‌شنبه",
+    "fri": "جمعه",
+    "sat": "شنبه",
+    "sun": "یکشنبه",
+}
+
+
+def _weekday(name: str) -> str:
+    """The Persian weekday name for a stored English one."""
+    return FA_WEEKDAYS.get(name[:3].lower(), name[:3])
+
+
+def _weekdays(names) -> str:
+    """A comma-separated run of Persian weekday names."""
+    return ", ".join(_weekday(str(n)) for n in names)
+
+
+def _on_off(state: bool) -> str:
+    """The Persian word for a relay or rule state."""
+    return "روشن" if state else "خاموش"
+
 MENU = """
 --- Control Menu ---
   1) Last sensor readings
@@ -582,9 +612,9 @@ async def _relay_menu_terminal(state: RuntimeState) -> None:
     await state.echo("\n[menu] Relay states:")
     for rid, cfg in sorted(RELAYS.items()):
         on = rc.get_state(rid)
-        note = f"  [CUT: {blocked_relays[rid]}]" if rid in blocked_relays else ""
+        note = f"  [قطع: {blocked_relays[rid]}]" if rid in blocked_relays else ""
         await state.echo(
-            f"  Relay {rid}: {cfg['name']} — {'ON' if on else 'OFF'}{note}"
+            f"  رله {rid}: {cfg['name']} — {_on_off(on)}{note}"
         )
 
     raw = await _prompt(
@@ -613,7 +643,7 @@ async def _relay_menu_terminal(state: RuntimeState) -> None:
 
     await rc.toggle(relay_id)
     on = rc.get_state(relay_id)
-    await state.echo(f"[menu] Relay {relay_id} is now {'ON' if on else 'OFF'}.\n")
+    await state.echo(f"[menu] رله {relay_id} اکنون {_on_off(on)}.\n")
     await state.log(f"[menu] Relay {relay_id} switched {'on' if on else 'off'} by operator")
     await state.notify_state_change(
         f"relay {relay_id} {'on' if on else 'off'} (operator)"
@@ -628,17 +658,17 @@ async def _show_app_config(state: RuntimeState) -> None:
     await state.echo(f"  API base URL:     {API_BASE_URL}")
     await state.echo(f"  WebSocket URL:    {WS_BASE_URL}")
     session = token_manager.session
-    await state.echo(f"  Device username:  {device_username() or '(not set)'}")
-    await state.echo(f"  Device ID:        {session.device_id if session else '(not logged in)'}")
+    await state.echo(f"  نام کاربری دستگاه:  {device_username() or 'تعیین نشده'}")
+    await state.echo(f"  شناسه دستگاه:        {session.device_id if session else 'وارد نشده'}")
     await state.echo(f"  Read interval:    {interval:.0f}s")
     await state.echo(f"  Telemetry every:  {telemetry_interval:.0f}s")
-    await state.echo(f"  Mapping source:   {os.environ.get('BOILERROOM_MAPPING_SOURCE', 'file')}")
-    await state.echo(f"  Mapping file:     {mapping_path}")
-    await state.echo(f"  Authenticated:    {token_manager.is_authenticated}")
+    await state.echo(f"  منبع نگاشت:   {os.environ.get('BOILERROOM_MAPPING_SOURCE', 'file')}")
+    await state.echo(f"  فایل نگاشت:     {mapping_path}")
+    await state.echo(f"  احراز هویت:    {'بله' if token_manager.is_authenticated else 'خیر'}")
     ws = await state.get_ws_status()
-    await state.echo(f"  WebSocket:        {'connected' if ws['connected'] else 'disconnected'}")
+    await state.echo(f"  WebSocket:        {'متصل' if ws['connected'] else 'قطع'}")
     if ws["hello_ack"]:
-        await state.echo(f"  WS hello_ack:     yes (server_time={ws.get('server_time')})")
+        await state.echo(f"  WS hello_ack:     بله (server_time={ws.get('server_time')})")
         await state.echo(
             f"  Desired config:   v{ws.get('desired_config_version')}  "
             f"schedule: v{ws.get('desired_schedule_version')}"
@@ -807,19 +837,19 @@ async def _mode_menu(state: RuntimeState) -> None:
             relay_id = relay_for_target(target)
             now_on = rc.get_state(relay_id) if rc is not None and relay_id is not None else None
             await view.message(
-                "Mode changed",
+                "حالت تغییر کرد",
                 [
-                    f"{target} -> automatic",
-                    "The schedule now drives it"
-                    + (f" (relay {relay_id} {'ON' if now_on else 'OFF'})" if now_on is not None else ""),
+                    f"{target} -> خودکار",
+                    "زمان‌بندی اکنون آن را هدایت می‌کند"
+                    + (f" (رله {relay_id} {_on_off(now_on)})" if now_on is not None else ""),
                 ],
             )
         else:
             await view.message(
-                "Mode changed",
+                "حالت تغییر کرد",
                 [
-                    f"{target} -> manual",
-                    "The schedule will leave it alone",
+                    f"{target} -> دستی",
+                    "زمان‌بندی دست نمی‌زند",
                     "until you set it back.",
                 ],
             )
@@ -909,14 +939,14 @@ async def _mode_menu_terminal(state: RuntimeState) -> None:
         relay_id = relay_for_target(target)
         now_on = rc.get_state(relay_id) if rc is not None and relay_id is not None else None
         await state.echo(
-            f"[menu] {target} -> automatic; the schedule now drives it"
-            + (f" (relay {relay_id} {'ON' if now_on else 'OFF'})" if now_on is not None else "")
+            f"[menu] {target} -> خودکار؛ زمان‌بندی اکنون آن را هدایت می‌کند"
+            + (f" (رله {relay_id} {_on_off(now_on)})" if now_on is not None else "")
             + "\n"
         )
     else:
         await state.echo(
-            f"[menu] {target} -> manual; the schedule will leave it alone "
-            "until you set it back.\n"
+            f"[menu] {target} -> دستی؛ زمان‌بندی تا زمانی که خودتان "
+            "آن را به حالت خودکار برنگردانید دست نمی‌زند.\n"
         )
 
     await state.log(f"[menu] {target} set to {mode} by operator")
@@ -1149,8 +1179,8 @@ async def _add_weekly_rule(state: RuntimeState) -> None:
         state,
         edited,
         token,
-        f"{start}-{end} {','.join(d[:3] for d in days)} -> "
-        f"{'ON' if turn_on else 'OFF'} for {', '.join(str(t) for t in targets)}",
+        f"{start}-{end} {_weekdays(days)} -> "
+        f"{_on_off(turn_on)} برای {', '.join(str(t) for t in targets)}",
     )
 
 
@@ -1232,8 +1262,8 @@ async def _add_weekly_rule_v2(state: RuntimeState) -> None:
         state,
         edited,
         token,
-        f"{start}-{end} {','.join(d[:3] for d in days)} -> "
-        f"{'ON' if turn_on else 'OFF'} for {', '.join(str(t) for t in targets)}",
+        f"{start}-{end} {_weekdays(days)} -> "
+        f"{_on_off(turn_on)} برای {', '.join(str(t) for t in targets)}",
     )
 
 
@@ -1390,11 +1420,11 @@ async def _remove_weekly_rule_v2(state: RuntimeState) -> None:
         # Build display rows
         rows = []
         for i, rule in enumerate(rules):
-            days = ", ".join(REVERSE_DAYS[d][:3] for d in sorted(rule.days))
+            days = _weekdays(REVERSE_DAYS[d] for d in sorted(rule.days))
             targets = ", ".join(str(t) for t in rule.targets)
             rows.append(
                 f"{i+1}) {rule.start:%H:%M}-{rule.end:%H:%M} {days} "
-                f"-> {'ON' if rule.state else 'OFF'} [{targets}]"
+                f"-> {_on_off(rule.state)} [{targets}]"
             )
 
         chosen = await view.select("Delete weekly rule", rows, index=index, legend=legend)
@@ -1410,7 +1440,7 @@ async def _remove_weekly_rule_v2(state: RuntimeState) -> None:
 
         # Show rule details
         rule = rules[index]
-        days = ", ".join(REVERSE_DAYS[d][:3] for d in sorted(rule.days))
+        days = _weekdays(REVERSE_DAYS[d] for d in sorted(rule.days))
         targets = ", ".join(str(t) for t in rule.targets)
         detail_lines = [
             f"Rule {index + 1}:",
@@ -2429,7 +2459,7 @@ async def _show_limits_status(state: RuntimeState) -> None:
             "\n[menu] No config yet — setting a limit starts one on this device."
         )
     else:
-        await state.echo(f"\n[menu] Limits (published config v{version})")
+        await state.echo(f"\n[menu] حدود (پیکربندی منتشرشده v{version})")
         if config_store.is_locally_modified:
             await state.echo(
                 f"        locally edited (revision {config_store.local_revision}, "

@@ -165,6 +165,7 @@ FA_TITLES = {
     "Select days": "انتخاب روزها",
     "Select targets": "انتخاب هدف‌ها",
     "Switch state": "تغییر وضعیت",
+    "Enter value": "ورود مقدار",
 }
 
 # Lines that are fixed text on the panel rather than data the menu formats.
@@ -310,7 +311,216 @@ FA_LINES = {
         "هنوز نگاشت دستگاهی نیست — سیم‌کشی این دستگاه از سابقه سرور می‌آید.",
     "record. Sensors and relays stay idle until it arrives.":
         "حسگرها و رله‌ها تا رسیدن آن بی‌کار می‌مانند.",
+    # Sign-in wizard. These are short lines on purpose: the panel body is three
+    # rows and the wizard has to stay readable at the operator's pace.
+    "Cannot use that:": "قابل استفاده نیست:",
+    "Checking with the": "در حال بررسی با",
+    "server ...": "سرور ...",
+    "Accepted.": "پذیرفته شد.",
+    "Saved here. You will": "اینجا ذخیره شد. دیگر",
+    "not be asked again.": "پرسیده نخواهد شد.",
+    "Not accepted.": "پذیرفته نشد.",
+    "Check the username": "نام کاربری را",
+    "and password, then": "و رمز را بررسی کنید، سپس",
+    "try again.": "دوباره تلاش کنید.",
+    "No answer from the": "پاسخی از",
+    "server yet.": "سرور نیامده است.",
+    "Kept and retried in": "نگه داشته شد و در",
+    "the background;": "پس‌زمینه دوباره تلاش می‌شود؛",
+    "saved when it works.": "هنگام موفقیت ذخیره می‌شود.",
+    "Left unsigned.": "بدون ورود رها شد.",
+    "The boilers keep to": "دیگ‌ها به",
+    "the cached schedule.": "زمان‌بندی ذخیره‌شده پایبند می‌مانند.",
+    "Restart to be asked.": "برای پرسش دوباره راه‌اندازی کنید.",
+    "Not signed in yet.": "هنوز وارد نشده‌اید.",
+    "provisioning.": "راه‌اندازی اولیه.",
+    # Rule and exception detail lines. Each is built as an f-string, so these
+    # are the fixed parts; the values beside them stay as they are.
+    "Rule ": "قانون ",
+    "Exception ": "استثنا ",
+    "Type the username": "نام کاربری را بنویسید",
+    "and password from": "و رمز را از",
+    "the keypad.": "صفحه‌کلید وارد کنید.",
+    "Digits only.": "تنها ارقام.",
+    # Status and configuration pages.
+    "Weekly rules:": "قوانین هفتگی:",
+    "Weekly rules: none": "قوانین هفتگی: هیچ",
+    "Exceptions:": "استثناها:",
+    "Exceptions: none": "استثناها: هیچ",
+    "Limits:": "حدود:",
+    "Limits: no boilers in the device mapping.": "حدود: دیگی در نگاشت دستگاه نیست.",
+    "Now:": "اکنون:",
+    "Now: no schedule": "اکنون: بدون زمان‌بندی",
+    "No weekly rules": "قانون هفتگی نیست",
+    "No date exceptions": "استثنای تاریخی نیست",
+    "No more weekly rules.": "قانون هفتگی دیگری نیست.",
+    "No more exceptions.": "استثنای دیگری نیست.",
+    "No schedule received yet.": "هنوز زمان‌بندی دریافت نشده است.",
+    "No config received yet.": "هنوز پیکربندی دریافت نشده است.",
+    "No device record fetched yet.": "هنوز سابقه دستگاه دریافت نشده است.",
+    "No relays configured.": "رله‌ای پیکربندی نشده است.",
+    "No boilers in the": "دیگی در",
+    "in the device mapping.": "نگاشت دستگاه نیست.",
+    "No boilers or pumps": "دیگ یا پمپی",
+    "device mapping.": "در نگاشت دستگاه نیست.",
+    "In force here; published when": "اینجا برقرار است؛ منتشر می‌شود وقتی",
+    "the device reconnects.": "دستگاه دوباره متصل شود.",
+    "The mode will be reported": "حالت گزارش می‌شود",
+    "when the device reconnects.": "وقتی دستگاه دوباره متصل شود.",
+    "No answer from the server.": "پاسخی از سرور نیامد.",
+    "Agent stopped.": "عامل متوقف شد.",
+    "  Agent stopped.": "  عامل متوقف شد.",
+    "  Starting up ...": "  در حال راه‌اندازی ...",
+    "Mode reported to the server.": "حالت به سرور ارسال شد.",
+    "Keypad did not start:": "صفحه‌کلید اجرا نشد:",
+    "  Keypad did not start:": "  صفحه‌کلید اجرا نشد:",
+    "Input: keyboard (mock hardware)": "ورودی: صفحه‌کلید (سخت‌افزار نمایشی)",
+    "Input: keyboard, restricted to the device's keypad:":
+        "ورودی: صفحه‌کلید، محدود به صفحه‌کلید دستگاه:",
 }
+
+
+# Option labels in the selectable lists. The values the handlers compare against
+# are unchanged, so only the row text differs. Rows carrying live data (a
+# temperature, a unit name, a target id) are not in here: they are built with
+# the data already in them and pass through untouched.
+FA_ROWS = {
+    # Mode choices.
+    "automatic": "خودکار",
+    "manual": "دستی",
+    "ON": "روشن",
+    "OFF": "خاموش",
+    # Weekday abbreviations, in the order the schedule stores them.
+    "Mon": "دوشنبه",
+    "Tue": "سه‌شنبه",
+    "Wed": "چهارشنبه",
+    "Thu": "پنج‌شنبه",
+    "Fri": "جمعه",
+    "Sat": "شنبه",
+    "Sun": "یکشنبه",
+    # Schedule edit menus.
+    "Add weekly rule": "افزودن قانون هفتگی",
+    "Remove weekly rule": "حذف قانون هفتگی",
+    "Add date exception": "افزودن استثنا",
+    "Remove exception": "حذف استثنا",
+    # Per-item actions and confirmations.
+    "View details": "مشاهده جزئیات",
+    "Delete this rule": "حذف این قانون",
+    "Delete this exception": "حذف این استثنا",
+    "Back to list": "بازگشت به فهرست",
+    "No, keep it": "خیر، نگهش دار",
+    "Yes, delete it": "بله، حذفش کن",
+    "No, keep running": "خیر، ادامه بده",
+    "Yes, stop it": "بله، متوقف کن",
+    # Temperature setpoint list.
+    "Device-wide limit": "حد سراسری دستگاه",
+    # Reading line labels.
+}
+
+
+def _translate_row(text: str) -> str:
+    """The Persian form of a fixed option label, or the text unchanged."""
+    return FA_ROWS.get(text, text)
+
+
+# Fixed labels that appear inside a line that also carries live values. A line
+# like "  Time: 08:00-22:00" is built with an f-string, so it is not a key in
+# FA_LINES and cannot be; these are substituted into the text instead. Order
+# matters only in that a longer label must come before a shorter one that starts
+# the same way.
+FA_FRAGMENTS = (
+    ("  Time: ", "  ساعت: "),
+    ("  Days: ", "  روزها: "),
+    ("  Action: ", "  کنش: "),
+    ("  Targets: ", "  هدف‌ها: "),
+    ("  Date: ", "  تاریخ: "),
+    ("  Window: ", "  بازه: "),
+    ("  Reason: ", "  دلیل: "),
+    ("Rule ", "قانون "),
+    ("Exception ", "استثنا "),
+    # The config and connection block. These are label/value rows, so the label
+    # is fixed and only the value varies.
+    ("  API base URL:     ", "  نشانی پایه API:     "),
+    ("  WebSocket URL:    ", "  نشانی WebSocket:    "),
+    ("  Device username:  ", "  نام کاربری دستگاه:  "),
+    ("  Device ID:        ", "  شناسه دستگاه:        "),
+    ("  Read interval:    ", "  بازه خواندن:    "),
+    ("  Telemetry every:  ", "  گزارش هر:  "),
+    ("  Mapping source:   ", "  منبع نگاشت:   "),
+    ("  Mapping file:     ", "  فایل نگاشت:     "),
+    ("  Authenticated:    ", "  احراز هویت:    "),
+    ("  WebSocket:        ", "  WebSocket:        "),
+    ("  WS hello_ack:     ", "  WS hello_ack:     "),
+    ("  Active config:    ", "  پیکربندی فعال:    "),
+    ("  Desired config:   ", "  پیکربندی خواسته:   "),
+    (" schedule: v", " زمان‌بندی: v"),
+    ("  Database: ", "  پایگاه داده: "),
+    (" rows from ", " ردیف از "),
+    (" sensor(s), ", " حسگر، "),
+    (" KB, keeping ", " کیلوبایت، نگه‌داشتن "),
+    (" days", " روز"),
+    # Mapping and reading lines.
+    ("  Sensor ", "  حسگر "),
+    ("  Relay ", "  رله "),
+    ("(role=", "(نقش="),
+    (", unit=", "، واحد="),
+    (", GPIO ", "، GPIO "),
+    ("°C", " درجه سلسیوس"),
+    ("  Last readings at ", "  آخرین خوانش‌ها در "),
+    (" (cycle ", " (چرخه "),
+    (": unavailable", ": در دسترس نیست"),
+    (":   °C", ":   درجه سلسیوس"),
+    # Schedule and limits summary lines.
+    ("Schedule v", "زمان‌بندی v"),
+    ("Schedule updated — ", "زمان‌بندی به‌روزرسانی شد — "),
+    ("Limits updated — ", "حدود به‌روزرسانی شد — "),
+    ("Now running a locally edited v", "اکنون نسخه محلی ویرایش‌شده v اجرا می‌شود"),
+    ("Now running locally edited limits on v", "اکنون حدود ویرایش محلی روی v اجرا می‌شود"),
+    ("(revision ", "(بازنگری "),
+    (", on top of published v", "، بر پایه نسخه منتشرشده v"),
+    ("The server's next publish replaces it", "انتشار بعدی سرور آن را جایگزین می‌کند"),
+    ("The server's next publish replaces them", "انتشار بعدی سرور آن‌ها را جایگزین می‌کند"),
+    (" now follows the device-wide limit", " اکنون از حد سراسری دستگاه پیروی می‌کند"),
+    ("— refusing to switch it on.", "— روشن کردن آن انجام نمی‌شود."),
+    ("Back to the published schedule v", "بازگشت به زمان‌بندی منتشرشده v"),
+    ("Back to the published config v", "بازگشت به پیکربندی منتشرشده v"),
+    (") boiler", ") دیگ"),
+    (" relay ", " رله "),
+    ("enter a number", "یک شماره وارد کنید"),
+    ("is already at ", " هم‌اکنون روی "),
+    ("is already ", " هم‌اکنون "),
+    ("is now ", " اکنون "),
+    # Mode and state words, wherever they land in a line. Both are whole words
+    # so this cannot touch a name that happens to contain them.
+    (" automatic", " خودکار"),
+    (" manual", " دستی"),
+    (" ON", " روشن"),
+    (" OFF", " خاموش"),
+    ("ON", "روشن"),
+    ("OFF", "خاموش"),
+    ("is cut off by a temperature limit (", " به‌وسیله حد دما قطع می‌شود ("),
+    # Weekday abbreviations, as the schedule stores them.
+)
+
+
+def _translate_line(text: str) -> str:
+    """
+    The Persian form of a body line, or the line unchanged.
+
+    A whole fixed line is a key in FA_LINES. A line that mixes Persian-translated
+    words with live values — a rule's time, a unit's name, a count — matches no
+    key, so its fixed labels are substituted in place. Substituting only the
+    labels is what keeps the values intact: a number, a device name and a relay
+    id come through untouched because nothing here matches them.
+    """
+    stripped = text.strip()
+    whole = FA_LINES.get(stripped)
+    if whole is not None:
+        return whole
+    for label, persian in FA_FRAGMENTS:
+        if label in text:
+            text = text.replace(label, persian)
+    return text
 
 
 def _label(label: str) -> str:
@@ -509,7 +719,7 @@ class Screen:
                     self.canvas.fill_rect(0, y, BODY_WIDTH, ROW_HEIGHT, True)
                 self._row(
                     y + TEXT_OFFSET,
-                    items[position],
+                    _translate_row(items[position]),
                     on=not selected,
                 )
 
@@ -537,7 +747,7 @@ class Screen:
         # Translate the fixed lines here, before wrapping, so a Persian line is
         # measured at the width it will actually be drawn at. Lines built from
         # live data pass through untouched.
-        wrapped = wrap_all([FA_LINES.get(line.strip(), line) for line in lines], BODY_COLUMNS)
+        wrapped = wrap_all([_translate_line(line) for line in lines], BODY_COLUMNS)
         if not wrapped:
             return
 
@@ -657,7 +867,7 @@ class Screen:
         for slot, line in enumerate(lines[:BODY_ROWS]):
             self._row(
                 self._body_row(slot) + TEXT_OFFSET,
-                FA_LINES.get(line.strip(), line),
+                _translate_line(line),
             )
         await self.render()
 
@@ -708,10 +918,11 @@ class Screen:
                 # Persian is the right. Putting it on the left of a Persian
                 # label puts the mark a whole word away from what it marks.
                 checkbox = "[x]" if selected[position] else "[ ]"
+                item = _translate_row(items[position])
                 text = (
-                    f"{items[position]} {checkbox}"
-                    if has_rtl(items[position])
-                    else f"{checkbox} {items[position]}"
+                    f"{item} {checkbox}"
+                    if has_rtl(item)
+                    else f"{checkbox} {item}"
                 )
 
                 if is_highlighted:
@@ -775,7 +986,7 @@ class Screen:
                     break
                 y = self._body_row(slot)
                 is_highlighted = position == index
-                text = items[position]
+                text = _translate_row(items[position])
 
                 if is_highlighted:
                     self.canvas.fill_rect(0, y, BODY_WIDTH, ROW_HEIGHT, True)
