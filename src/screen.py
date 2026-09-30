@@ -14,11 +14,19 @@ say ``2`` and ``8``, not "up" and "down":
   ``2``  move up          ``#``  select / accept
   ``8``  move down        ``*``  back
 
-The layout is fixed at 128x64 with a 6x8 cell: a title bar, six body rows, and
-the legend strip. Anything longer than six rows scrolls, and a bar down the
-right-hand edge shows how far through it you are — on a screen this small the
-difference between "the list ends here" and "there are nine more" is otherwise
-invisible.
+The layout is fixed at 128x64. Rows are 13 px rather than 8: Persian needs
+that much to be readable, because a Naskh letter reaches about eight rows above
+the baseline and the ج and ژ hang three rows below it, so the 5x7 cell it
+replaces could only ever have drawn a smudge. The cost is honest and visible —
+three body rows instead of six — and it buys text an operator can read in a
+boiler room rather than text that merely occupies the panel. Anything longer
+than three rows scrolls, and a bar down the right-hand edge shows how far
+through it you are; on a screen this small the difference between "the list ends
+here" and "there are two more" is otherwise invisible.
+
+Rows are measured in pixels rather than characters now. Persian letters are
+variable width, so a string's width depends on which letterforms it shapes into
+and not on how many characters it has.
 
 Nothing here knows what a boiler is. Screens are given lines and items; the
 menu builds them.
@@ -26,7 +34,16 @@ menu builds them.
 
 from __future__ import annotations
 
-from display_canvas import Canvas, WIDTH, truncate, wrap_all
+from text_shaper import has_rtl
+from display_canvas import (
+    Canvas,
+    HEIGHT,
+    WIDTH,
+    fits,
+    text_width,
+    truncate,
+    wrap_all,
+)
 from keypad_layout import (
     CANCEL,
     DEL,
@@ -40,14 +57,16 @@ from keypad_layout import (
 
 # -- geometry ---------------------------------------------------------------
 
-TITLE_HEIGHT = 8
-LEGEND_HEIGHT = 8
-ROW_HEIGHT = 8
+# Rows are 13 px because that is what Persian needs. The title and legend get
+# the same 13, and three body rows are what is left: 13 + 39 + 12 = 64.
+TITLE_HEIGHT = 13
+ROW_HEIGHT = 13
+BODY_ROWS = 3
+BODY_HEIGHT = BODY_ROWS * ROW_HEIGHT  # 39
 
 BODY_TOP = TITLE_HEIGHT
-BODY_ROWS = 6
-BODY_HEIGHT = BODY_ROWS * ROW_HEIGHT
-LEGEND_TOP = BODY_TOP + BODY_HEIGHT  # 56
+LEGEND_TOP = BODY_TOP + BODY_HEIGHT  # 52
+LEGEND_HEIGHT = HEIGHT - LEGEND_TOP  # 12
 
 # The right-hand gutter the scroll bar lives in. Selection highlights stop
 # short of it, so the bar stays readable on a highlighted row.
@@ -55,12 +74,15 @@ GUTTER = 4
 BODY_WIDTH = WIDTH - GUTTER
 
 TEXT_X = 2
-# Glyphs are 7 px in an 8 px cell; the spare row goes above, so a highlighted
-# row has a margin at the top and sits flush with the row below it.
-TEXT_OFFSET = 1
+# Both fonts are drawn from the top of the row and land on one shared baseline
+# inside it, so a Persian descender and an ASCII digit sit on the same line.
+TEXT_OFFSET = 0
 
-BODY_COLUMNS = (BODY_WIDTH - TEXT_X) // 6  # 20
-BAR_COLUMNS = (WIDTH - TEXT_X * 2) // 6  # 20
+# Widths available to text, in pixels. These replaced character-column
+# counts: Persian letterforms are variable width, so how much fits depends on
+# which letters a line is made of and not on how many it has.
+BODY_COLUMNS = BODY_WIDTH - TEXT_X  # 122
+BAR_COLUMNS = WIDTH - TEXT_X * 2  # 124
 
 
 # The scroll keys, drawn as their caps with an arrowhead beside each rather
@@ -81,11 +103,77 @@ def scroll_legend(*extra: tuple[str, str]) -> tuple[tuple[str, str], ...]:
     ) + extra
 
 
+# Legend labels the panel draws in Persian. Translated here rather than at every
+# call site because the keycaps themselves are the same in both languages, and a
+# legend is only ever assembled from these few words.
+FA_LABELS = {
+    "OK": "تأیید",
+    "Back": "بازگشت",
+    "Done": "انجام",
+    "More": "بیشتر",
+    "Yes": "بله",
+    "No": "خیر",
+    "On": "روشن",
+    "Off": "خاموش",
+}
+
+# Titles the panel draws in Persian, keyed by the English title passed in. The
+# menu passes English titles from one place and the terminal keeps printing
+# English, so only the panel needs the lookup.
+FA_TITLES = {
+    "Menu": "منو",
+    "Boiler room": "اتاق دیگ",
+    "Status": "وضعیت",
+    "Keypad": "صفحه‌کلید",
+    "Schedule": "زمان‌بندی",
+    "Temperatures": "دماها",
+    "Safety limits": "حدود ایمنی",
+    "Relay control": "راه‌اندازی رله",
+    "Unit modes": "حالت‌ها",
+    "Sensor readings": "خوانش‌ها",
+    "App configuration": "پیکربندی",
+    "Device mapping": "نگاشت دستگاه",
+    "Error": "خطا",
+    "Done": "انجام شد",
+    "No change": "بدون تغییر",
+    "Reported": "ارسال شد",
+    "No targets": "بدون هدف",
+    "No days": "بدون روز",
+    "No rules": "بدون قانون",
+    "No exceptions": "بدون استثنا",
+}
+
+# Lines that are fixed text on the panel rather than data the menu formats.
+FA_LINES = {
+    "Starting up ...": "در حال راه‌اندازی ...",
+    "Agent stopped.": "عامل متوقف شد.",
+    "Keypad did not start:": "صفحه‌کلید اجرا نشد:",
+    "no keypad fitted": "صفحه‌کلید وصل نیست",
+    "Back to menu": "بازگشت به منو",
+    "No relays configured.": "رله‌ای پیکربندی نشده است.",
+    "No boilers or pumps": "دیگ یا پمپی در نگاشت نیست",
+    "in the device mapping.": "",
+    "At least one target": "دست‌کم یک هدف",
+    "must be selected.": "باید انتخاب شود.",
+    "At least one day": "دست‌کم یک روز",
+    "No weekly rules": "قانون هفتگی برای حذف نیست",
+    "to delete.": "",
+    "No date exceptions": "استثنای تاریخی برای حذف نیست",
+    "No more weekly rules.": "قانون هفتگی دیگری نیست.",
+    "Nothing to choose from.": "موردی برای انتخاب نیست.",
+    "Mode reported to the server.": "حالت به سرور ارسال شد.",
+}
+
+
+def _label(label: str) -> str:
+    return FA_LABELS.get(label, label)
+
+
 def _entry_width(entry: tuple[str, str]) -> int:
     if entry == SCROLL_KEYS:
         return _SCROLL_WIDTH
     cap, label = entry
-    return len(f"{cap} {label}" if label else cap) * 6
+    return text_width(f"{cap} {_label(label)}" if label else cap)
 
 
 class Screen:
@@ -113,6 +201,27 @@ class Screen:
 
     # -- chrome --------------------------------------------------------------
 
+    def _row(self, y: int, text: str, *, right_edge: int | None = None, on: bool = True) -> None:
+        """
+        Draw one line of body text, aligned to the language it is written in.
+
+        Persian is set from the right edge and Latin from the left, because a
+        reader expects the start of the line where they start reading. On a panel
+        this narrow that matters: a left-aligned Persian label puts its first
+        word at the far end from the eye and leaves the ragged edge on the side
+        the reading begins.
+
+        ``right_edge`` defaults to the body's right edge, which is where the
+        scroll bar would otherwise sit, so a long line runs into the gutter
+        rather than under the bar.
+        """
+        edge = WIDTH - GUTTER if right_edge is None else right_edge
+        line = truncate(text, edge - TEXT_X)
+        if has_rtl(line):
+            self.canvas.text_right(edge, y, line, on=on)
+        else:
+            self.canvas.text(TEXT_X, y, line, on=on)
+
     def frame(
         self,
         title: str,
@@ -123,13 +232,18 @@ class Screen:
         """Clear the canvas and draw the title bar and legend strip."""
         canvas = self.canvas
         canvas.clear()
+        title = FA_TITLES.get(title, title)
 
         canvas.fill_rect(0, 0, WIDTH, TITLE_HEIGHT, True)
         room = BAR_COLUMNS
         if right:
-            room = max(1, BAR_COLUMNS - len(right) - 1)
-            canvas.text_right(WIDTH - TEXT_X, TEXT_OFFSET, right, on=False)
-        canvas.text(TEXT_X, TEXT_OFFSET, truncate(title.upper(), room), on=False)
+            room = max(1, BAR_COLUMNS - text_width(right) - 4)
+            canvas.text_right(WIDTH - TEXT_X, 0, right, on=False)
+        shown = truncate(title.upper(), room)
+        if has_rtl(shown):
+            canvas.text_right(WIDTH - TEXT_X, 0, shown, on=False)
+        else:
+            canvas.text(TEXT_X, 0, shown, on=False)
 
         self._legend(legend)
 
@@ -150,8 +264,8 @@ class Screen:
 
         # Widest spacing that still fits, then the caps on their own. A strip
         # that has been cut in half says less than nothing.
-        for gap in (3, 2, 1):
-            if content + gap * 6 * (len(entries) - 1) <= room:
+        for gap in (18, 12, 6):
+            if content + gap * (len(entries) - 1) <= room:
                 break
         else:
             gap = 1
@@ -160,23 +274,23 @@ class Screen:
             )
             content = sum(_entry_width(entry) for entry in entries)
 
-        total = content + gap * 6 * (len(entries) - 1)
+        total = content + gap * (len(entries) - 1)
         x = max(TEXT_X, (WIDTH - total) // 2)
         y = LEGEND_TOP + TEXT_OFFSET
 
         for index, entry in enumerate(entries):
             if index:
-                x += gap * 6
+                x += gap
             if entry == SCROLL_KEYS:
                 x = canvas.text(x, y, cap_for(SCROLL_UP), on=False)
-                canvas.triangle_up(x, y + 2, on=False)
+                canvas.triangle_up(x, y + 3, on=False)
                 x += 6 + 4
                 x = canvas.text(x, y, cap_for(SCROLL_DOWN), on=False)
-                canvas.triangle_down(x, y + 2, on=False)
+                canvas.triangle_down(x, y + 3, on=False)
                 x += 6
                 continue
             cap, label = entry
-            x = canvas.text(x, y, f"{cap} {label}" if label else cap, on=False)
+            x = canvas.text(x, y, f"{cap} {_label(label)}" if label else cap, on=False)
 
     def _scrollbar(self, top: int, visible: int, total: int) -> None:
         """A thumb on the right edge showing which slice of a list is shown."""
@@ -245,10 +359,9 @@ class Screen:
                 selected = position == index
                 if selected:
                     self.canvas.fill_rect(0, y, BODY_WIDTH, ROW_HEIGHT, True)
-                self.canvas.text(
-                    TEXT_X,
+                self._row(
                     y + TEXT_OFFSET,
-                    truncate(items[position], BODY_COLUMNS),
+                    items[position],
                     on=not selected,
                 )
 
@@ -273,7 +386,10 @@ class Screen:
         the bottom, so holding one key reads the whole thing; ``*`` leaves at
         any point.
         """
-        wrapped = wrap_all(lines, BODY_COLUMNS)
+        # Translate the fixed lines here, before wrapping, so a Persian line is
+        # measured at the width it will actually be drawn at. Lines built from
+        # live data pass through untouched.
+        wrapped = wrap_all([FA_LINES.get(line.strip(), line) for line in lines], BODY_COLUMNS)
         if not wrapped:
             return
 
@@ -286,11 +402,11 @@ class Screen:
             if total > BODY_ROWS:
                 strip = (
                     SCROLL_KEYS,
-                    (cap_for(ENTER), "Done" if at_end else "More"),
+                    (cap_for(ENTER), _label("Done" if at_end else "More")),
                     (cap_for(CANCEL), "Back"),
                 )
             else:
-                strip = ((cap_for(ENTER), "Done"), (cap_for(CANCEL), "Back"))
+                strip = ((cap_for(ENTER), _label("Done")), (cap_for(CANCEL), _label("Back")))
 
             right = f"{min(top + BODY_ROWS, total)}/{total}" if total > BODY_ROWS else ""
             self.frame(title, right=right, legend=strip)
@@ -359,15 +475,18 @@ class Screen:
             self.frame(title, legend=strip)
 
             for slot, line in enumerate(question):
-                self.canvas.text(TEXT_X, self._body_row(slot) + TEXT_OFFSET, line)
+                self._row(self._body_row(slot) + TEXT_OFFSET, line)
 
             entry_y = self._body_row(BODY_ROWS - 1)
             self.canvas.hline(0, entry_y - 1, WIDTH)
 
             text = "*" * len(editor.text) if mask else editor.text
             # Show the tail once an answer outgrows the row: what was just
-            # typed is what needs checking.
-            visible = text[-(BODY_COLUMNS - 2) :]
+            # typed is what needs checking. Sliced by width, not by count,
+            # because a Persian prompt would otherwise lose the wrong end.
+            visible = text
+            while text_width(visible) > BODY_COLUMNS - 8 and visible:
+                visible = visible[1:]
             end = self.canvas.text(TEXT_X + 2, entry_y + TEXT_OFFSET, visible)
             self.canvas.fill_rect(end, entry_y + 1, 4, ROW_HEIGHT - 2, True)
 
@@ -378,13 +497,19 @@ class Screen:
                 return editor.text
 
     async def splash(self, title: str, lines: list[str], *, legend=()) -> None:
-        """Draw a screen and leave it there. Nothing is read."""
+        """
+        Draw a screen and leave it there. Nothing is read.
+
+        Titles and fixed lines are translated on the way in. Lines the menu
+        formats from live data - a temperature, a status line - are left alone:
+        those need translating where they are built, not here, because only the
+        code that knows what a number means can say it in Persian.
+        """
         self.frame(title, legend=legend)
         for slot, line in enumerate(lines[:BODY_ROWS]):
-            self.canvas.text(
-                TEXT_X,
+            self._row(
                 self._body_row(slot) + TEXT_OFFSET,
-                truncate(line, BODY_COLUMNS),
+                FA_LINES.get(line.strip(), line),
             )
         await self.render()
 
@@ -431,14 +556,21 @@ class Screen:
                     break
                 y = self._body_row(slot)
                 is_highlighted = position == index
+                # The tick goes on the side the reader starts from, which for
+                # Persian is the right. Putting it on the left of a Persian
+                # label puts the mark a whole word away from what it marks.
                 checkbox = "[x]" if selected[position] else "[ ]"
-                text = f"{checkbox} {items[position]}"
+                text = (
+                    f"{items[position]} {checkbox}"
+                    if has_rtl(items[position])
+                    else f"{checkbox} {items[position]}"
+                )
 
                 if is_highlighted:
                     self.canvas.fill_rect(0, y, BODY_WIDTH, ROW_HEIGHT, True)
-                    self.canvas.text(TEXT_X, y + TEXT_OFFSET, truncate(text, BODY_COLUMNS), on=False)
+                    self._row(y + TEXT_OFFSET, text, on=False)
                 else:
-                    self.canvas.text(TEXT_X, y + TEXT_OFFSET, truncate(text, BODY_COLUMNS), on=True)
+                    self._row(y + TEXT_OFFSET, text, on=True)
 
             self._scrollbar(top, BODY_ROWS, total)
             await self.render()
@@ -499,9 +631,9 @@ class Screen:
 
                 if is_highlighted:
                     self.canvas.fill_rect(0, y, BODY_WIDTH, ROW_HEIGHT, True)
-                    self.canvas.text(TEXT_X, y + TEXT_OFFSET, truncate(text, BODY_COLUMNS), on=False)
+                    self._row(y + TEXT_OFFSET, text, on=False)
                 else:
-                    self.canvas.text(TEXT_X, y + TEXT_OFFSET, truncate(text, BODY_COLUMNS), on=True)
+                    self._row(y + TEXT_OFFSET, text, on=True)
 
             self._scrollbar(top, BODY_ROWS, total)
             await self.render()

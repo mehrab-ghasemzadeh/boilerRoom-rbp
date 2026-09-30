@@ -173,6 +173,80 @@ SCHEDULE_V2_ITEMS = (
 BACK = "\x00back"
 
 
+# Persian for the panel.
+#
+# The menu above stays in English on purpose: it is also the terminal menu, and
+# the terminal is where you debug. What the panel draws goes through this table
+# instead, so the two can differ without either being wrong.
+#
+# Labels are short because the panel is 122 px wide at 13 px a row and there are
+# three rows of it. A word that does not fit is truncated with a "~", and a
+# label whose end is cut off is a label nobody can act on — so these are written
+# to fit rather than translated word for word.
+FA_MAIN_ITEMS = (
+    ("1", "خوانش‌ها"),
+    ("2", "راه‌اندازی رله"),
+    ("3", "حالت‌ها"),
+    ("4", "دماها"),
+    ("5", "تغییر زمان‌بندی"),
+    ("6", "زمان‌بندی فعال"),
+    ("7", "پیکربندی"),
+    ("8", "نگاشت دستگاه"),
+    ("0", "خروج"),
+)
+
+FA_TEMPERATURE_ITEMS = (
+    ("1", "تنظیم دمای دیگ"),
+    ("2", "حذف دمای دیگ"),
+    ("3", "حدود ایمنی"),
+    ("0", "بازگشت"),
+)
+
+FA_LIMITS_ITEMS = (
+    ("1", "بیشینه دمای آب"),
+    ("2", "کمینه دمای آب"),
+    ("3", "بیشینه دمای محیط"),
+    ("4", "حذف ویرایش‌ها"),
+    ("0", "بازگشت"),
+)
+
+FA_SCHEDULE_V2_ITEMS = (
+    ("1", "افزودن قانون هفتگی"),
+    ("2", "حذف قانون هفتگی"),
+    ("3", "افزودن استثنا"),
+    ("4", "حذف استثنا"),
+    ("0", "بازگشت"),
+)
+
+# Screen titles. Keyed by the English title passed to _choose(), so a handler
+# does not have to know which language it is being drawn in.
+FA_TITLES = {
+    "Menu": "منو",
+    "Schedule": "زمان‌بندی",
+    "Temperatures": "دماها",
+    "Safety limits": "حدود ایمنی",
+}
+
+FA_LABELS = {
+    "OK": "تأیید",
+    "Back": "بازگشت",
+}
+
+
+def _fa_label(label: str) -> str:
+    """The Persian form of an English label, or the label itself if untranslated."""
+    return FA_LABELS.get(label, label)
+
+
+# Which Persian item list goes with which English menu title.
+_FA_ITEMS = {
+    "Schedule": FA_SCHEDULE_V2_ITEMS,
+    "Temperatures": FA_TEMPERATURE_ITEMS,
+    "Safety limits": FA_LIMITS_ITEMS,
+    "Menu": FA_MAIN_ITEMS,
+}
+
+
 # The device answers are read from. A module-level handle, like the schedule
 # and config stores, so the twenty-odd call sites of _prompt keep their
 # signature instead of threading it through every menu function.
@@ -320,7 +394,7 @@ async def _choose(
     On a terminal this is the numbered block and a typed number, unchanged. On
     the panel it is a selectable list — with the "Back" row left out, because
     the back key is right there on the keypad and a list that spends one of its
-    six rows saying so is a list with five rows.
+    three rows saying so is a list with two rows.
     """
     view = screen()
     if view is None:
@@ -328,10 +402,14 @@ async def _choose(
 
     await _flush_page(state)
 
-    shown = [item for item in items if not (hide_back and item[0] == "0")]
+    # The panel draws in Persian. The answers are unchanged — they are still
+    # the digits the handlers compare against — so only the words differ.
+    fa_items = _FA_ITEMS.get(title, items)
+
+    shown = [item for item in fa_items if not (hide_back and item[0] == "0")]
     index = _last_choice.get(title, 0)
     chosen = await view.select(
-        title,
+        FA_TITLES.get(title, title),
         [label for _, label in shown],
         index=min(index, len(shown) - 1),
         legend=legend,
