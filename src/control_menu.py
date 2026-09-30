@@ -1240,9 +1240,9 @@ async def _select_targets_table(state: RuntimeState, view: Screen) -> list[Targe
 
 async def _select_days_table(state: RuntimeState, view: Screen) -> list[str] | None:
     """Select days of week using checkboxes."""
-    day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-    day_values = ["1", "2", "3", "4", "5", "6", "7"]
-    items = day_names
+    day_names = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+    day_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    items = day_labels
     legend = (
         SCROLL_KEYS,
         (cap_for(ENTER), "Toggle"),
@@ -1254,7 +1254,7 @@ async def _select_days_table(state: RuntimeState, view: Screen) -> list[str] | N
     if selected is None:
         return None
 
-    chosen = [day_values[i] for i, sel in enumerate(selected) if sel]
+    chosen = [day_names[i] for i, sel in enumerate(selected) if sel]
     if not chosen:
         await view.message("No days", ["At least one day", "must be selected."])
         return await _select_days_table(state, view)
