@@ -31,14 +31,15 @@ table without touching this file.
 Tokens
 ------
 Each position emits either a single character, which is appended to whatever is
-being typed, or one of three control tokens:
+being typed, or one of four control tokens:
 
   ``enter``   accept the line — and, on the display, select the highlighted row
+  ``next``    finish the current field and advance to the next field
   ``del``     rub out the last character
   ``cancel``  go back: every menu reads an empty answer as "back"
 
 Ten digits leaves six keys for the six functions the menus actually need:
-accept, rub out, cancel, ``.`` for a decimal temperature, ``,`` to separate a
+accept, next, rub out, cancel, ``.`` for a decimal temperature, ``,`` to separate a
 list of units, and ``-`` which is what clears a limit.
 
 The default below matches the pad fitted to this device, whose caps read::
@@ -48,11 +49,11 @@ The default below matches the pad fitted to this device, whose caps read::
     7 8 9 C
     * 0 # D
 
-so ``#`` accepts and ``*`` goes back — the two the operator reaches for most,
-on the two keys that are not digits and not tucked up the right-hand side. That
-leaves A-D for the four remaining functions. On the graphical display, ``2``
+so the centre row (4, 5, 6) provides the primary navigation: ``4`` goes back,
+``5`` accepts, ``6`` advances to the next field. On the graphical display, ``2``
 and ``8`` also scroll: they sit above and below ``5`` and read as up and down
-without anything printed on them saying so.
+without anything printed on them saying so. The bottom row (``*``, ``#``) keeps
+the traditional back/accept as a fallback.
 
 Caps
 ----
@@ -95,7 +96,8 @@ COL_LABELS = ("1", "2", "3", "4")
 ENTER = "enter"
 DEL = "del"
 CANCEL = "cancel"
-CONTROL_TOKENS = (ENTER, DEL, CANCEL)
+NEXT = "next"
+CONTROL_TOKENS = (ENTER, DEL, CANCEL, NEXT)
 
 # Spellings accepted in BOILERROOM_KEYPAD_LAYOUT. The layout is comma-separated,
 # so the comma key has to be named rather than written.
@@ -124,13 +126,15 @@ KEY_ALIASES = {
     "clear": CANCEL,
     "backspace": DEL,
     "delete": DEL,
+    "next": NEXT,
+    "tab": NEXT,
 }
 
 # Row-major, matching DEFAULT_ROW_GPIO x DEFAULT_COL_GPIO. See the module
 # docstring for why each key does what it does.
 DEFAULT_LAYOUT = (
     ("1", "2", "3", DEL),
-    ("4", "5", "6", "."),
+    (CANCEL, ENTER, NEXT, "."),
     ("7", "8", "9", ","),
     (CANCEL, "0", ENTER, "-"),
 )
@@ -441,12 +445,16 @@ class LineEditor:
     ``cancel`` and an empty ``enter`` both finish with an empty string, which
     every prompt in the menu already treats as "back" — so there is no way to
     get stuck in a prompt with no keyboard to hand.
+
+    ``next`` finishes the current field and signals the caller to advance to
+    the next field in a multi-field form.
     """
 
     def __init__(self, *, max_length: int = MAX_LINE_LENGTH):
         self._max_length = max_length
         self._characters: list[str] = []
         self.cancelled = False
+        self.next_field = False
 
     @property
     def text(self) -> str:
@@ -455,10 +463,15 @@ class LineEditor:
     def feed(self, token: str) -> bool:
         """Apply one keypress. Returns True once the answer is complete."""
         if token == ENTER:
+            self.next_field = False
+            return True
+        if token == NEXT:
+            self.next_field = True
             return True
         if token == CANCEL:
             self.cancelled = True
             self._characters.clear()
+            self.next_field = False
             return True
         if token == DEL:
             if self._characters:
