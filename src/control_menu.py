@@ -2984,7 +2984,26 @@ async def _start_screen(state: RuntimeState, device) -> Screen | None:
     terminal.
     """
     display = getattr(state, "display", None)
-    if display is None or not getattr(display, "available", True):
+
+    if display is None:
+        await state.log(
+            "[menu] No display was constructed — the panel stays dark and the "
+            "menu stays on the terminal",
+            level=logging.WARNING,
+        )
+        return None
+
+    if not getattr(display, "available", True):
+        # An unavailable display is a configuration fault, not a fault in the
+        # panel: under mocked hardware the mock display reports itself
+        # unavailable unless BOILERROOM_DISPLAY asks for a preview. Saying
+        # nothing here is what makes a dark panel look like a wiring problem.
+        await state.log(
+            f"[menu] {getattr(display, 'name', 'display')} is not available "
+            "for this configuration — the panel stays dark and the menu stays "
+            "on the terminal",
+            level=logging.WARNING,
+        )
         return None
 
     if not hasattr(device, "read_key"):
