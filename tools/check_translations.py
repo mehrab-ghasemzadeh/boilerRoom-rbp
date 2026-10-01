@@ -261,6 +261,67 @@ def _fstring_tails() -> list[tuple[str, str]]:
     return out
 
 
+def _stray_persian() -> list[tuple[str, int, str]]:
+    """
+    Persian that would still be Persian after the operator picks English.
+
+    A lookup table is fine: the language setting decides whether it is
+    consulted. Persian written straight into code is not fine, because nothing
+    consults it — it is already the answer, in every language. It may only
+    appear as the Persian half of a ``_t(english, persian)`` pair.
+
+    Scoped to the two modules that build operator-facing prose. The Persian in
+    the font table, in the shaper's joining rules and in the display's test card
+    is Persian on purpose and is not prose anybody switches language over.
+    """
+    rows: list[tuple[str, int, str]] = []
+    for path in (SRC / "control_menu.py", SRC / "screen.py"):
+        tree = ast.parse(path.read_text())
+        docstrings = {
+            id(node.body[0].value)
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and node.body
+            and isinstance(node.body[0], ast.Expr)
+            and isinstance(node.body[0].value, ast.Constant)
+            and isinstance(node.body[0].value.value, str)
+        }
+        tables = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and (
+                        target.id.startswith("FA_")
+                        or target.id
+                        in ("WEEKDAYS", "REVERSE_DAYS", "LANGUAGE_MENU")
+                    ):
+                        tables.add(node)
+        paired = set()
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "_t"
+            ):
+                for arg in node.args:
+                    for inner in ast.walk(arg):
+                        if isinstance(inner, ast.Constant):
+                            paired.add(id(inner))
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and re.search(r"[\u0600-\u06FF]", node.value)
+            ):
+                continue
+            if id(node) in docstrings or id(node) in paired:
+                continue
+            if any(node in ast.walk(table) for table in tables):
+                continue
+            rows.append((path.name, node.lineno, node.value))
+    return rows
+
+
 def main(argv: list[str]) -> int:
     show_all = "--all" in argv
     rows = collect()
@@ -336,7 +397,14 @@ def main(argv: list[str]) -> int:
             print(f"  [{file}] {tail!r}  ({mark})")
         print()
 
-    return 1 if unique else 0
+    stray = _stray_persian()
+    print(f"{len(stray)} stray Persian literal(s) — Persian written into code,")
+    print("which no language setting can switch off:\n")
+    for name, line, text in stray:
+        print(f"  [{name}:{line}] {text!r}")
+    print()
+
+    return 1 if (unique or stray) else 0
 
 
 if __name__ == "__main__":

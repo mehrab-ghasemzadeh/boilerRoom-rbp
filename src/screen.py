@@ -37,6 +37,8 @@ from __future__ import annotations
 import datetime
 
 from text_shaper import has_rtl
+
+import language
 from display_canvas import (
     Canvas,
     HEIGHT,
@@ -423,6 +425,8 @@ FA_ROWS = {
 
 def _translate_row(text: str) -> str:
     """The Persian form of a fixed option label, or the text unchanged."""
+    if not language.is_persian():
+        return text
     return FA_ROWS.get(text, text)
 
 
@@ -498,6 +502,7 @@ FA_FRAGMENTS = (
     (" automatic", " خودکار"),
     (" manual", " دستی"),
     (" ON", " روشن"),
+    ("Panel language:", " زبان پنل: "),
     (" OFF", " خاموش"),
     ("ON", "روشن"),
     ("OFF", "خاموش"),
@@ -577,6 +582,8 @@ def _translate_line(text: str) -> str:
     labels is what keeps the values intact: a number, a device name and a relay
     id come through untouched because nothing here matches them.
     """
+    if not language.is_persian():
+        return text
     stripped = text.strip()
     whole = FA_LINES.get(stripped)
     if whole is not None:
@@ -588,6 +595,8 @@ def _translate_line(text: str) -> str:
 
 
 def _label(label: str) -> str:
+    if not language.is_persian():
+        return label
     return FA_LABELS.get(label, label)
 
 
@@ -668,7 +677,7 @@ class Screen:
         """
         canvas = self.canvas
         canvas.clear()
-        title = FA_TITLES.get(title, title)
+        title = FA_TITLES.get(title, title) if language.is_persian() else title
 
         canvas.fill_rect(0, 0, WIDTH, TITLE_HEIGHT, True)
 

@@ -70,6 +70,8 @@ from device_config import ConfigError, config_store, describe as describe_config
 from display_font import DEGREE
 from display_canvas import text_width, truncate, wrap
 from keypad_layout import CANCEL, ENTER, NEXT, cap_for
+from logging_setup import get_logger
+import language
 from mapping_provider import DEFAULT_MAPPING_PATH
 from limits_guard import limit_guard
 from runtime_state import RuntimeState
@@ -97,6 +99,8 @@ from schedule_runner import (
 
 # relay role -> schedule target type, the reverse of schedule_runner's map
 ROLE_TARGET = {role: kind for kind, role in TARGET_ROLE.items()}
+
+_log = get_logger("menu")
 
 # Day index -> name for display
 REVERSE_DAYS = {index: name for name, index in WEEKDAYS.items()}
@@ -127,9 +131,21 @@ def _weekdays(names) -> str:
     return ", ".join(_weekday(str(n)) for n in names)
 
 
+def _t(english: str, persian: str) -> str:
+    """
+    Whichever of the two the panel is currently speaking.
+
+    For prose that is built at runtime and so is not a key in any table — a
+    status line naming a target, a word inside an f-string. The English is the
+    source and the Persian is written beside it, so the two cannot drift apart
+    the way a lookup table and its callers do.
+    """
+    return persian if language.is_persian() else english
+
+
 def _on_off(state: bool) -> str:
     """The Persian word for a relay or rule state."""
-    return "روشن" if state else "خاموش"
+    return _t("on", "روشن") if state else _t("off", "خاموش")
 
 MENU = """
 --- Control Menu ---
@@ -142,6 +158,7 @@ MENU = """
   7) Show app configuration
   8) Show device mapping
   9) Show status
+ 10) Change language
   0) Quit
 > """
 
@@ -160,6 +177,15 @@ LIMITS_MENU = """
   0) Back
 > """
 
+# Each language named in its own script, so the row is findable by an operator
+# who cannot read the one currently on the panel. Which row is *current* is
+# shown by the panel's own selection, not by a tick, for the same reason.
+LANGUAGE_MENU = """
+  1) English
+  2) فارسی
+  0) Back
+> """
+
 # The same options as the blocks above, as (answer, short label). The terminal
 # reads the block; the display builds a selectable list from these. Labels are
 # written to fit twenty columns, which is what the panel has.
@@ -173,7 +199,16 @@ MAIN_ITEMS = (
     ("7", "App configuration"),
     ("8", "Device mapping"),
     ("9", "Status"),
+    ("10", "Change language"),
     ("0", "Quit"),
+)
+
+# Identical to MAIN_ITEMS on purpose: a language's name is written in that
+# language, so translating the rows would only ever change one of the two.
+LANGUAGE_ITEMS = (
+    ("1", language.name(language.ENGLISH)),
+    ("2", language.name(language.PERSIAN)),
+    ("0", "Back"),
 )
 
 TEMPERATURE_ITEMS = (
@@ -225,6 +260,7 @@ FA_MAIN_ITEMS = (
     ("7", "پیکربندی"),
     ("8", "نگاشت دستگاه"),
     ("9", "وضعیت"),
+    ("10", "زبان"),
     ("0", "خروج"),
 )
 
@@ -255,6 +291,7 @@ FA_SCHEDULE_V2_ITEMS = (
 # does not have to know which language it is being drawn in.
 FA_TITLES = {
     "Menu": "منو",
+    "Language": "زبان",
     "Schedule": "زمان‌بندی",
     "Temperatures": "دماها",
     "Safety limits": "حدود ایمنی",
@@ -277,6 +314,7 @@ _FA_ITEMS = {
     "Temperatures": FA_TEMPERATURE_ITEMS,
     "Safety limits": FA_LIMITS_ITEMS,
     "Menu": FA_MAIN_ITEMS,
+    "Language": LANGUAGE_ITEMS,
 }
 
 
@@ -437,12 +475,12 @@ async def _choose(
 
     # The panel draws in Persian. The answers are unchanged — they are still
     # the digits the handlers compare against — so only the words differ.
-    fa_items = _FA_ITEMS.get(title, items)
+    fa_items = _FA_ITEMS.get(title, items) if language.is_persian() else items
 
     shown = [item for item in fa_items if not (hide_back and item[0] == "0")]
     index = _last_choice.get(title, 0)
     chosen = await view.select(
-        FA_TITLES.get(title, title),
+        FA_TITLES.get(title, title) if language.is_persian() else title,
         [label for _, label in shown],
         index=min(index, len(shown) - 1),
         legend=legend,
@@ -615,9 +653,13 @@ async def _relay_menu_terminal(state: RuntimeState) -> None:
     await state.echo("\n[menu] Relay states:")
     for rid, cfg in sorted(RELAYS.items()):
         on = rc.get_state(rid)
-        note = f"  [قطع: {blocked_relays[rid]}]" if rid in blocked_relays else ""
+        note = (
+            f"  [{_t('CUT', 'قطع')}: {blocked_relays[rid]}]"
+            if rid in blocked_relays
+            else ""
+        )
         await state.echo(
-            f"  رله {rid}: {cfg['name']} — {_on_off(on)}{note}"
+            f"  {_t('Relay', 'رله')} {rid}: {cfg['name']} — {_on_off(on)}{note}"
         )
 
     raw = await _prompt(
@@ -646,7 +688,10 @@ async def _relay_menu_terminal(state: RuntimeState) -> None:
 
     await rc.toggle(relay_id)
     on = rc.get_state(relay_id)
-    await state.echo(f"[menu] رله {relay_id} اکنون {_on_off(on)}.\n")
+    await state.echo(
+        f"[menu] {_t('Relay', 'رله')} {relay_id} "
+        f"{_t('is now', 'اکنون')} {_on_off(on)}.\n"
+    )
     await state.log(f"[menu] Relay {relay_id} switched {'on' if on else 'off'} by operator")
     await state.notify_state_change(
         f"relay {relay_id} {'on' if on else 'off'} (operator)"
@@ -661,17 +706,35 @@ async def _show_app_config(state: RuntimeState) -> None:
     await state.echo(f"  API base URL:     {API_BASE_URL}")
     await state.echo(f"  WebSocket URL:    {WS_BASE_URL}")
     session = token_manager.session
-    await state.echo(f"  نام کاربری دستگاه:  {device_username() or 'تعیین نشده'}")
-    await state.echo(f"  شناسه دستگاه:        {session.device_id if session else 'وارد نشده'}")
+    await state.echo(
+        f"  {_t('Device username', 'نام کاربری دستگاه')}:  "
+        f"{device_username() or _t('not set', 'تعیین نشده')}"
+    )
+    await state.echo(
+        f"  {_t('Device id', 'شناسه دستگاه')}:        "
+        f"{session.device_id if session else _t('not signed in', 'وارد نشده')}"
+    )
     await state.echo(f"  Read interval:    {interval:.0f}s")
     await state.echo(f"  Telemetry every:  {telemetry_interval:.0f}s")
-    await state.echo(f"  منبع نگاشت:   {os.environ.get('BOILERROOM_MAPPING_SOURCE', 'file')}")
-    await state.echo(f"  فایل نگاشت:     {mapping_path}")
-    await state.echo(f"  احراز هویت:    {'بله' if token_manager.is_authenticated else 'خیر'}")
+    await state.echo(
+        f"  {_t('Mapping source', 'منبع نگاشت')}:   "
+        f"{os.environ.get('BOILERROOM_MAPPING_SOURCE', 'file')}"
+    )
+    await state.echo(f"  {_t('Mapping file', 'فایل نگاشت')}:     {mapping_path}")
+    await state.echo(
+        f"  {_t('Authenticated', 'احراز هویت')}:    "
+        f"{_t('yes', 'بله') if token_manager.is_authenticated else _t('no', 'خیر')}"
+    )
     ws = await state.get_ws_status()
-    await state.echo(f"  WebSocket:        {'متصل' if ws['connected'] else 'قطع'}")
+    await state.echo(
+        f"  WebSocket:        "
+        f"{_t('connected', 'متصل') if ws['connected'] else _t('disconnected', 'قطع')}"
+    )
     if ws["hello_ack"]:
-        await state.echo(f"  WS hello_ack:     بله (server_time={ws.get('server_time')})")
+        await state.echo(
+            f"  WS hello_ack:     {_t('yes', 'بله')} "
+            f"(server_time={ws.get('server_time')})"
+        )
         await state.echo(
             f"  Desired config:   v{ws.get('desired_config_version')}  "
             f"schedule: v{ws.get('desired_schedule_version')}"
@@ -840,20 +903,24 @@ async def _mode_menu(state: RuntimeState) -> None:
             relay_id = relay_for_target(target)
             now_on = rc.get_state(relay_id) if rc is not None and relay_id is not None else None
             await view.message(
-                "حالت تغییر کرد",
+                _t("Mode changed", "حالت تغییر کرد"),
                 [
-                    f"{target} -> خودکار",
-                    "زمان‌بندی اکنون آن را هدایت می‌کند"
-                    + (f" (رله {relay_id} {_on_off(now_on)})" if now_on is not None else ""),
+                    f"{target} -> {_t('automatic', 'خودکار')}",
+                    _t("the schedule now drives it", "زمان‌بندی اکنون آن را هدایت می‌کند")
+                    + (
+                        f" ({_t('relay', 'رله')} {relay_id} {_on_off(now_on)})"
+                        if now_on is not None
+                        else ""
+                    ),
                 ],
             )
         else:
             await view.message(
-                "حالت تغییر کرد",
+                _t("Mode changed", "حالت تغییر کرد"),
                 [
-                    f"{target} -> دستی",
-                    "زمان‌بندی دست نمی‌زند",
-                    "until you set it back.",
+                    f"{target} -> {_t('manual', 'دستی')}",
+                    _t("the schedule does not touch it,", "زمان‌بندی دست نمی‌زند"),
+                    _t("until you set it back.", "تا زمانی که خودتان آن را برگردانید."),
                 ],
             )
 
@@ -942,14 +1009,20 @@ async def _mode_menu_terminal(state: RuntimeState) -> None:
         relay_id = relay_for_target(target)
         now_on = rc.get_state(relay_id) if rc is not None and relay_id is not None else None
         await state.echo(
-            f"[menu] {target} -> خودکار؛ زمان‌بندی اکنون آن را هدایت می‌کند"
-            + (f" (رله {relay_id} {_on_off(now_on)})" if now_on is not None else "")
+            f"[menu] {target} -> {_t('automatic', 'خودکار')}"
+            f"{_t('; the schedule now drives it', '؛ زمان‌بندی اکنون آن را هدایت می‌کند')}"
+            + (
+                f" ({_t('relay', 'رله')} {relay_id} {_on_off(now_on)})"
+                if now_on is not None
+                else ""
+            )
             + "\n"
         )
     else:
         await state.echo(
-            f"[menu] {target} -> دستی؛ زمان‌بندی تا زمانی که خودتان "
-            "آن را به حالت خودکار برنگردانید دست نمی‌زند.\n"
+            f"[menu] {target} -> {_t('manual', 'دستی')}"
+            f"{_t('; the schedule does not touch it until you set it back.', '؛ زمان‌بندی تا زمانی که خودتان آن را به حالت خودکار برنگردانید دست نمی‌زند.')}"
+            "\n"
         )
 
     await state.log(f"[menu] {target} set to {mode} by operator")
@@ -1183,7 +1256,8 @@ async def _add_weekly_rule(state: RuntimeState) -> None:
         edited,
         token,
         f"{start}-{end} {_weekdays(days)} -> "
-        f"{_on_off(turn_on)} برای {', '.join(str(t) for t in targets)}",
+        f"{_on_off(turn_on)} {_t('for', 'برای')} "
+        f"{', '.join(str(t) for t in targets)}",
     )
 
 
@@ -1266,7 +1340,8 @@ async def _add_weekly_rule_v2(state: RuntimeState) -> None:
         edited,
         token,
         f"{start}-{end} {_weekdays(days)} -> "
-        f"{_on_off(turn_on)} برای {', '.join(str(t) for t in targets)}",
+        f"{_on_off(turn_on)} {_t('for', 'برای')} "
+        f"{', '.join(str(t) for t in targets)}",
     )
 
 
@@ -2462,7 +2537,10 @@ async def _show_limits_status(state: RuntimeState) -> None:
             "\n[menu] No config yet — setting a limit starts one on this device."
         )
     else:
-        await state.echo(f"\n[menu] حدود (پیکربندی منتشرشده v{version})")
+        await state.echo(
+            f"\n[menu] {_t('Safety limits', 'حدود')} "
+            f"({_t('published config', 'پیکربندی منتشرشده')} v{version})"
+        )
         if config_store.is_locally_modified:
             await state.echo(
                 f"        locally edited (revision {config_store.local_revision}, "
@@ -2647,6 +2725,8 @@ async def _handle_choice(state: RuntimeState, choice: str) -> None:
         await _show_mapping(state)
     elif choice == "9":
         await _show_status(state)
+    elif choice == "10":
+        await _language_menu(state)
     elif choice == "0":
         await state.echo("\n[menu] Shutting down ...")
         state.shutdown.set()
@@ -2843,6 +2923,37 @@ async def _show_status(state: RuntimeState) -> None:
     await view.page("Status", await _status_lines(state))
 
 
+async def _language_menu(state: RuntimeState) -> None:
+    """
+    Let the operator choose the language the panel speaks.
+
+    Saved as soon as it is chosen rather than at shutdown, because shutdown is
+    not guaranteed and a language lost on every unclean exit is a language the
+    operator has to go through this screen to get back.
+
+    The menu redraws in the new language by simply returning: every caller
+    returns to the main loop, which draws the menu again through the same
+    lookup that just changed.
+    """
+    choice = await _choose(
+        state,
+        "Language",
+        LANGUAGE_ITEMS,
+        LANGUAGE_MENU,
+    )
+    if choice == BACK or choice == "0":
+        return
+
+    wanted = {"1": language.ENGLISH, "2": language.PERSIAN}.get(choice)
+    if wanted is None:
+        await state.echo(f"\n[menu] Unknown option: {choice!r}\n")
+        return
+
+    applied = await language.save(wanted)
+    _log.info("[menu] Panel language set to %s", applied)
+    await state.echo(f"\n[menu] Panel language: {applied}\n")
+
+
 async def _confirm_quit(state: RuntimeState) -> bool:
     """
     Check before stopping the agent.
@@ -2897,6 +3008,11 @@ async def _start_screen(state: RuntimeState, device) -> Screen | None:
 
     for line in getattr(display, "describe", list)():
         await state.log(f"[menu] {line}")
+
+    # Before the first frame is drawn, so the splash is already in the saved
+    # language rather than flashing Persian and then changing.
+    await language.load()
+    await state.log(f"[menu] Panel language: {language.get()}")
 
     # Read fresh at every frame rather than sampled once here, so the icon in
     # the title bar follows a reconnect instead of showing whatever the link was
