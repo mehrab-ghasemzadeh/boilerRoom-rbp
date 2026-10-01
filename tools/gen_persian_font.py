@@ -253,6 +253,77 @@ DIGITS = "۰۱۲۳۴۵۶۷۸۹"
 # to their isolated shape, which is what the shaping table below encodes.
 FORMS = ("isolated", "final", "initial", "medial")
 
+# Letters that are one body drawn with a different number of dots, and the body
+# they share. Rasterising each member on its own means each one picks its own
+# threshold and they drift apart by a pixel here and there: a shin that does not
+# match the seen beside it, a jim that looks nothing like the ha it came from. A
+# reader does not consciously compare them, but the eye does, and a panel is
+# small enough that the drift is visible as the text looking uneven.
+#
+# So each family is drawn once, from the member with no dots, and the others are
+# that same drawing plus their dots. The key is the body; the value gives every
+# other member's dots as (how many, above or below).
+FAMILIES = {
+    "ب": {"ت": (2, "above"), "ث": (3, "above"), "پ": (3, "below")},
+    "ح": {"ج": (1, "below"), "چ": (3, "below"), "خ": (1, "above")},
+    "س": {"ش": (3, "above")},
+    "ص": {"ض": (1, "above")},
+    "ط": {"ظ": (1, "above")},
+    "ر": {"ز": (1, "above"), "ژ": (3, "above")},
+    "د": {"ذ": (1, "above")},
+}
+
+# The one family whose shared body is not a member of the family: a beh carries
+# a dot of its own, so the body has to be taken from it with the dot removed
+# rather than taken from a letter that is already bare.
+BASE_HAS_OWN_DOTS = {"ب": (1, "below")}
+
+# Dot shapes, as (column, row) offsets from the block's own top-left. All one
+# row tall: a row only has three rows below the baseline to give, and a two-row
+# triangle of dots does not fit under a beh or a ha without running off the
+# bottom of the panel. Three in a row also reads better than a triangle at this
+# size, where a triangle is two pixels against one.
+DOT_SHAPES = {
+    1: ((0, 0),),
+    2: ((0, 0), (1, 0)),
+    3: ((0, 0), (1, 0), (2, 0)),
+}
+
+# How many dots each letter carries, and whether they sit above or below it.
+# The family members above are covered by their base's entry where the base is
+# dotted too. Published into the generated module so the checker can ask the
+# same question from the same answer rather than re-deriving it by rendering
+# the font a second time, which is how the two came to disagree.
+DOTTED = {
+    "ب": (1, "below"),
+    "ت": (2, "above"),
+    "ث": (3, "above"),
+    "پ": (3, "below"),
+    "ج": (1, "below"),
+    "چ": (3, "below"),
+    "خ": (1, "above"),
+    "ش": (3, "above"),
+    "ض": (1, "above"),
+    "ظ": (1, "above"),
+    "ز": (1, "above"),
+    "ژ": (3, "above"),
+    "ذ": (1, "above"),
+    "ن": (1, "above"),
+    "ف": (1, "above"),
+    "ق": (2, "above"),
+    "غ": (1, "above"),
+    "ة": (2, "above"),
+}
+
+# A yeh is dotted when it stands alone and bare once it joins, which is why it
+# cannot simply be listed.
+YEH_BARE_FORMS = ("initial", "medial")
+
+# How far the dots stand off the body. One clear pixel: any closer and the dots
+# weld into the letter they belong to, which is the mistake this font spent most
+# of its earlier life getting wrong.
+DOT_GAP = 1
+
 # A partner letter used to force a joining position. Beh is dual-joining, so it
 # pulls whatever sits next to it into the form we want: before the target to
 # make it final, after it to make it initial, both to make it medial.
@@ -331,15 +402,21 @@ def form_codepoint(font: hb.Font, letter: str, form: str) -> int:
     return codepoints[index]
 
 
-def form_advance(face: hb.Face, font: hb.Font, letter: str, form: str) -> int:
+def form_advance(face: hb.Face, font: hb.Font, letter: str, form: str) -> float:
     """
-    How far the pen moves past this letter, in whole panel pixels.
+    How far the pen moves past this letter, in panel pixels.
 
-    This is deliberately not the width of the ink. Arabic letters overlap their
+    Deliberately not the width of the ink. Arabic letters overlap their
     neighbours by design - the tail of one is the shoulder of the next - so
     advancing by the cropped ink width spreads a word out and makes it read as
     unjoined letters. The font's own advance is what keeps a shaped word the
     width it should be.
+
+    Returned unrounded, and the shaper accumulates it in floating point before
+    rounding once per position. Rounding each glyph on its own looks harmless
+    and is not: at this size a letter advances five and a half pixels, so three
+    of them in a row drift a pixel and a half, and a word that should read as
+    joined comes apart in the middle.
 
     A zero-advance glyph is one the shaper has already merged into a neighbour,
     such as the alef of a lam-alef ligature; those take no space of their own.
@@ -356,12 +433,12 @@ def form_advance(face: hb.Face, font: hb.Font, letter: str, form: str) -> int:
     shaped = _shape(font, probe)
     index = {"isolated": 0, "final": 0, "initial": -1, "medial": 1}[form]
     if not shaped:
-        return 0
+        return 0.0
     try:
         advance = shaped[index][1] / face.upem * RENDER_PX
     except IndexError:
-        return 0
-    return max(1, round(advance))
+        return 0.0
+    return round(max(1.0, advance), 3)
 
 
 def grey_for(letter: str, form: str, hb_font=None) -> tuple[list[list[int]], int, int] | None:
@@ -489,6 +566,128 @@ def _ink_extent(columns: tuple[int, ...]) -> tuple[int, int]:
     return above, below
 
 
+def _column_bits(columns: tuple[int, ...]) -> set[tuple[int, int]]:
+    """Every inked pixel as ``(column, row)``."""
+    out: set[tuple[int, int]] = set()
+    for x, column in enumerate(columns):
+        for y in range(64):
+            if column & (1 << y):
+                out.add((x, y))
+    return out
+
+
+def _stamp(ink: set[tuple[int, int]]) -> tuple[tuple[int, ...], int, int]:
+    """Pixels back into ``(columns, width, top_row)``, growing to fit."""
+    if not ink:
+        return (), 0, 0
+    width = max(x for x, _ in ink) + 1
+    top = min(y for _, y in ink)
+    columns = [0] * width
+    for x, y in ink:
+        columns[x] |= 1 << (y - top)
+    return tuple(columns), width, top
+
+
+def _drop_dot(columns: tuple[int, ...], below: bool) -> tuple[int, ...]:
+    """
+    A body with the base letter's own dot taken off it.
+
+    The shared body of the beh family is not any of its members, so it is the
+    beh with its dot removed: the dot is whichever ink the flood fill cannot
+    reach from the letter's main stroke.
+    """
+    ink = _column_bits(columns)
+    if not ink:
+        return columns
+    # Flood the body from the heaviest column, then whatever is left over and
+    # small is the dot.
+    start = max(ink, key=lambda p: (0, -p[0]))
+    seen = {start}
+    stack = [start]
+    while stack:
+        x, y = stack.pop()
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                nxt = (x + dx, y + dy)
+                if nxt in ink and nxt not in seen:
+                    seen.add(nxt)
+                    stack.append(nxt)
+    stray = ink - seen
+    return tuple(
+        column & ~sum(1 << y for x, y in stray if x == index)
+        for index, column in enumerate(columns)
+    )
+
+
+def _with_dots(
+    body: tuple[int, ...],
+    ascender: int,
+    count: int,
+    where: str,
+) -> tuple[tuple[int, ...], int, int] | None:
+    """
+    The shared body with ``count`` dots above or below it.
+
+    Returns ``(columns, width, ascender)``, or None when the dots will not fit
+    the row - in which case the caller keeps the member's own rendering rather
+    than shipping a glyph that overflows.
+
+    The body is left exactly where it was. Everything here is worked out in
+    panel rows rather than glyph rows, so that adding a dot above a letter makes
+    the glyph taller upwards and leaves the letter itself on the same rows,
+    instead of nudging the whole letter along the baseline.
+    """
+    ink = _column_bits(body)
+    if not ink:
+        return None
+    top = min(y for _, y in ink)
+    bottom = max(y for _, y in ink)
+    left = min(x for x, _ in ink)
+    right = max(x for x, _ in ink)
+    shape = DOT_SHAPES[count]
+    span = max(dx for dx, _ in shape) + 1
+    height = max(dy for _, dy in shape) + 1
+    centre = (left + right) // 2
+
+    # The body's own extent, in panel rows. ``lift`` is how far the whole glyph
+    # has to rise to make room under it; the body moves with it.
+    panel_top = BASELINE - ascender + top
+    panel_bottom = BASELINE - ascender + bottom
+    lift = 0
+
+    if where == "above":
+        dot_top = panel_top - DOT_GAP - height
+        new_top, new_bottom = dot_top, panel_bottom
+    else:
+        dot_top = panel_bottom + 1 + DOT_GAP
+        new_top, new_bottom = panel_top, dot_top + height - 1
+
+        if new_bottom > ROW_HEIGHT - 1:
+            # The letter already reaches the bottom of the row - a ha's bowl
+            # does - so there is no room under it. Lift the whole glyph to make
+            # some. The drawing is untouched, only where it sits, which is why
+            # this still counts as the same shared body.
+            lift = new_bottom - (ROW_HEIGHT - 1)
+            dot_top -= lift
+            new_top -= lift
+            new_bottom -= lift
+            if new_top < 0:
+                return None
+
+    if new_top < 0 or new_bottom > ROW_HEIGHT - 1:
+        return None
+
+    placed = {(x, BASELINE - ascender + y - lift) for x, y in ink}
+    for dx, dy in shape:
+        placed.add((centre - span // 2 + dx, dot_top + dy))
+
+    width = max(x for x, _ in placed) + 1
+    columns = [0] * width
+    for x, y in placed:
+        columns[x] |= 1 << (y - new_top)
+    return tuple(columns), width, BASELINE - new_top
+
+
 def _check_fits(letter: str, form: str, columns: tuple[int, ...], ascender: int) -> None:
     """
     Refuse to emit a glyph that does not fit its row.
@@ -555,8 +754,40 @@ def build() -> str:
             advance = 0
             if shaped:
                 widest = max(adv for _, adv in shaped)
-                advance = max(1, round(widest / face.upem * RENDER_PX))
+                advance = round(max(1.0, widest / face.upem * RENDER_PX), 3)
             table[(letters, form)] = (columns, width, ascender, advance, lsb)
+
+    # One drawing per letter family, then the dots put back on. Done after the
+    # main pass so it overwrites the members' own separate renderings.
+    for base, members in FAMILIES.items():
+        for form in FORMS:
+            drawn = table.get((base, form))
+            if drawn is None:
+                continue
+            columns = drawn[0]
+            if base in BASE_HAS_OWN_DOTS:
+                columns = _drop_dot(columns, BASE_HAS_OWN_DOTS[base][1] == "below")
+                if not any(columns):
+                    continue
+
+            # The base itself keeps its own dots.
+            own = BASE_HAS_OWN_DOTS.get(base)
+            if own:
+                stamped = _with_dots(columns, drawn[2], own[0], own[1])
+                if stamped is not None:
+                    table[(base, form)] = (stamped[0], stamped[1], stamped[2], drawn[3], drawn[4])
+                    _check_fits(base, form, stamped[0], stamped[2])
+
+            for member, (count, where) in members.items():
+                stamped = _with_dots(columns, drawn[2], count, where)
+                if stamped is None:
+                    continue
+                new_columns, width, new_ascender = stamped
+                drawn_member = table.get((member, form))
+                advance = drawn_member[3] if drawn_member else drawn[3]
+                lsb = drawn_member[4] if drawn_member else drawn[4]
+                table[(member, form)] = (new_columns, width, new_ascender, advance, lsb)
+                _check_fits(member, form, new_columns, new_ascender)
 
     lines = [
         '"""',
@@ -585,6 +816,11 @@ def build() -> str:
         "",
         f"ROW_HEIGHT = {ROW_HEIGHT}",
         f"BASELINE = {BASELINE}",
+        "",
+        "# Letters that carry dots, and how many: published so the checker can",
+        "# verify them without rendering the source font a second time.",
+        f"DOTTED = {DOTTED!r}",
+        f"YEH_BARE_FORMS = {YEH_BARE_FORMS!r}",
         "",
         "GLYPHS = {",
     ]

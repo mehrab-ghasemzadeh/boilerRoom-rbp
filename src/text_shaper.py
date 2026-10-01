@@ -453,6 +453,86 @@ def shape(text: str) -> list[Piece]:
         # the left-hand end where the end of the line is.
         pieces = [piece for group in reversed(groups) for piece in group]
 
+    return _space(pieces)
+
+
+def _ink_span(columns: tuple[int, ...]) -> tuple[int | None, int | None]:
+    """Leftmost and rightmost columns carrying ink, or (None, None)."""
+    lo = hi = None
+    for index, column in enumerate(columns):
+        if column:
+            if lo is None:
+                lo = index
+            hi = index
+    return lo, hi
+
+
+def _space(pieces: list[Piece]) -> list[Piece]:
+    """
+    Give every piece an integer step, by measuring where the ink actually lands.
+
+    Two things are wrong with simply trusting the font's advances at this size.
+    The advances are fractional, so rounding each one on its own lets the error
+    accumulate and a word drifts apart letter by letter. And Arabic advances
+    assume precise subpixel placement with the letters meeting exactly; on a
+    pixel grid they land a pixel short, which opens a gap in the middle of a
+    joined word and makes it read as separate letters.
+
+    So the pen is accumulated in floating point and rounded once per position,
+    and then each piece is nudged so its ink meets the ink before it: flush
+    against it where the two letters join, and a single blank column apart where
+    they do not, which is what tells a reader the word has ended there.
+
+    Which is which is already in the list. Pieces are in visual order, so
+    ``previous`` is the letter that comes after this one on the page, and
+    therefore after it in the word. A letter drawn initial or medial reaches
+    forward to join the letter after it; one drawn final or medial accepts a join
+    from the letter before it. Both have to be true for the pair to meet.
+    """
+    # Round the pen once, cumulatively, so the error in a whole line is at most
+    # half a pixel instead of half a pixel per letter. Each entry is where that
+    # piece *starts*, not where the pen has got to afterwards.
+    pen = 0.0
+    at: list[int] = []
+    for piece in pieces:
+        at.append(round(pen))
+        pen = round(pen + piece.advance)
+
+    # Then place each piece by where its ink actually has to sit relative to the
+    # ink before it.
+    previous_hi: int | None = None
+    shift = 0
+    for index, piece in enumerate(pieces):
+        lo, hi = _ink_span(piece.columns)
+        # Everything after an adjusted piece moves with it, or the word comes
+        # apart further along than the letter we just fixed.
+        at[index] += shift
+        if index and previous_hi is not None and lo is not None and piece.letter.strip():
+            previous = pieces[index - 1]
+            # Pieces are in visual order, so this piece is the letter
+            # *earlier* in the word and `previous` is the one after it. A
+            # letter drawn initial or medial reaches forward to join what comes
+            # next; the letter after it accepts that join when it is drawn final
+            # or medial. Both have to be true for the two to meet.
+            reaches_forward = piece.form in ("initial", "medial")
+            accepts_back = previous.form in ("final", "medial")
+            wanted = 1 if (reaches_forward and accepts_back) else 2
+            adjustment = (previous_hi + wanted) - (at[index] + lo)
+            shift += adjustment
+            at[index] += adjustment
+        if hi is not None:
+            previous_hi = at[index] + hi
+
+    # The canvas draws each piece at the running total of the steps before it and
+    # steps on by this piece's own advance, so the step a piece carries is the
+    # distance to the one after it. The last piece's advance is never used to
+    # place anything; it is kept so text_width still measures the line.
+    for index, piece in enumerate(pieces):
+        following = at[index + 1] if index + 1 < len(pieces) else at[index] + round(
+            piece.advance
+        )
+        piece.advance = following - at[index]
+
     return pieces
 
 

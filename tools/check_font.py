@@ -43,7 +43,10 @@ def blobs(columns: tuple[int, ...]) -> list[int]:
         while stack:
             x, y = stack.pop()
             size += 1
-            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            for dx, dy in (
+                    (1, 0), (-1, 0), (0, 1), (0, -1),
+                    (1, 1), (1, -1), (-1, 1), (-1, -1),
+                ):
                 nxt = (x + dx, y + dy)
                 if nxt in pixels and nxt not in seen:
                     seen.add(nxt)
@@ -53,25 +56,28 @@ def blobs(columns: tuple[int, ...]) -> list[int]:
     return sizes
 
 
-def _glyph_has_mark(letter: str, form: str) -> bool:
-    """Whether the generator found a dot, hamza or inner stroke on this glyph.
+HAMZA_ALOFS = ("أ", "إ", "آ", "ؤ", "ئ", "ء")
+# A kaf's stroke and an alef's hamza are part of the letter's drawing, not a
+# dot standing off it, so they are allowed to be attached. The dots below are
+# not: those must stand clear or the letter is misread.
+ATTACHED_MARKS = HAMZA_ALOFS + ("ک", "گ")
 
-    Read back out of the generated table rather than from a list of dotted
-    letters, so the check and the generator agree on what a mark is: a Persian
-    yeh is dotted alone and bare once it joins, and a table cannot say that.
+
+def _expected_marks(letter: str, form: str) -> int:
     """
-    glyph = display_font_fa.glyph(letter, form)
-    if glyph is None:
-        return False
-    columns = glyph[0]
-    # A mark is a small piece of ink that can be separated from the body at some
-    # cut. The stored bitmap is already cut, so look for the same thing in the
-    # font: re-rasterise and ask whether any cut frees a small piece.
-    grey = gen.grey_for(letter, form)
-    if grey is None:
-        return False
-    rows, width, height = grey
-    return gen._has_mark(rows, width, height, gen.MARK_BUDGET.get(letter, gen.MAX_MARK_PIXELS))
+    How many dots this glyph should have, or 0 when it should have none.
+
+    Taken from the table the generator published rather than re-rasterising the
+    source font and guessing. Re-deriving it here meant the check and the
+    generator could disagree, and when they did the checker reported dotless
+    letters as having their dots welded on.
+    """
+    if letter in ATTACHED_MARKS:
+        return 0
+    if letter == "ی":
+        return 0 if form in display_font_fa.YEH_BARE_FORMS else 2
+    entry = display_font_fa.DOTTED.get(letter)
+    return entry[0] if entry else 0
 
 
 def main() -> int:
@@ -92,15 +98,22 @@ def main() -> int:
             checked += 1
             loose = sum(sizes[1:])
             name = f"{letter}/{form}"
-            if _glyph_has_mark(letter, form):
-                # The mark must be standing off its letter, not welded on.
+            expected = _expected_marks(letter, form)
+            if expected:
+                # The dots must be standing off their letter, not welded on,
+                # and they must be a single cluster of the expected size.
                 if loose == 0:
                     welded.append(name)
-                elif loose > budget:
-                    split.append(f"{name} ({loose}px loose)")
+                elif len(sizes) - 1 != 1 or loose > budget:
+                    split.append(f"{name} ({loose}px loose, want {expected})")
             elif loose:
-                # Nothing should be detached from a letter that has no mark.
-                split.append(f"{name} ({loose}px loose)")
+                # A hamza or a kaf stroke is allowed to stand clear of its
+                # letter; nothing else should.
+                if letter in ATTACHED_MARKS or letter == "ۀ":
+                    if loose > budget:
+                        split.append(f"{name} ({loose}px loose)")
+                else:
+                    split.append(f"{name} ({loose}px loose)")
 
     print(f"glyphs checked: {checked}")
     print(f"mark welded onto its letter: {len(welded)}  {' '.join(welded) or '-'}")
