@@ -141,6 +141,7 @@ MENU = """
   6) Show active schedule
   7) Show app configuration
   8) Show device mapping
+  9) Show status
   0) Quit
 > """
 
@@ -171,6 +172,7 @@ MAIN_ITEMS = (
     ("6", "Active schedule"),
     ("7", "App configuration"),
     ("8", "Device mapping"),
+    ("9", "Status"),
     ("0", "Quit"),
 )
 
@@ -222,6 +224,7 @@ FA_MAIN_ITEMS = (
     ("6", "زمان‌بندی فعال"),
     ("7", "پیکربندی"),
     ("8", "نگاشت دستگاه"),
+    ("9", "وضعیت"),
     ("0", "خروج"),
 )
 
@@ -2642,6 +2645,8 @@ async def _handle_choice(state: RuntimeState, choice: str) -> None:
         await _show_app_config(state)
     elif choice == "8":
         await _show_mapping(state)
+    elif choice == "9":
+        await _show_status(state)
     elif choice == "0":
         await state.echo("\n[menu] Shutting down ...")
         state.shutdown.set()
@@ -3248,12 +3253,6 @@ async def _run_menu_loop(state: RuntimeState, device) -> None:
         # reading while the operator looks at six blank rows.
         state.capture_echo()
 
-    # The panel opens on the status screen rather than on the menu: it is what
-    # somebody walking up to the device wants to see, and the menu is one key
-    # away from it. Shown from inside the loop so it is covered by the handler
-    # below like every other screen.
-    pending_status = view is not None
-
     while not state.shutdown.is_set():
         # One handler for the whole step, because every screen below reads
         # keys and any of them can find the input device gone — stdin closed,
@@ -3267,11 +3266,6 @@ async def _run_menu_loop(state: RuntimeState, device) -> None:
             # whoever is standing here.
             if _credentials_wanted(state):
                 await _credentials_wizard(state)
-                continue
-
-            if pending_status:
-                pending_status = False
-                await _show_status(state)
                 continue
 
             _set_context("Menu")
