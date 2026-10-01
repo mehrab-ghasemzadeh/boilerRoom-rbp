@@ -511,31 +511,31 @@ FA_FRAGMENTS = (
 )
 
 
-# The link indicator in the title bar, as (column, row) text. Three stacked
-# bars, the usual signal mark. Connected they are solid; disconnected they are
-# struck through. The slash rather than a dimmer or hollower version of the
-# same shape, because at five pixels across "less ink" and "no ink" are the same
-# picture, and a heating panel that has lost the server has to say so in a way
-# nobody has to squint at.
+# The link indicator in the title bar, as (column, row) text: the wifi mark —
+# three arcs opening downward over the emitter. Disconnected it is struck
+# through. The slash rather than a dimmer or partial version of the same shape,
+# because at seven pixels across "less ink" and "no ink" are the same picture,
+# and a heating panel that has lost the server has to say so in a way nobody has
+# to squint at.
 LINK_UP = (
-    "...#.",
-    "..###",
-    ".####",
-    "#####",
-    "...#.",
-    "..###",
-    ".####",
+    "..###..",
+    ".#...#.",
+    "#.....#",
+    "..###..",
+    ".#...#.",
+    "..###..",
+    "...#...",
 )
 LINK_DOWN = (
-    "...#.",
-    "#..##",
-    "##..#",
-    "###..",
-    "...#.",
-    "#..##",
-    "##..#",
+    "..###..",
+    ".#...#.",
+    "#.....#",
+    "..#.#..",
+    ".#...#.",
+    "...##..",
+    "...#...",
 )
-LINK_WIDTH = 5
+LINK_WIDTH = 7
 LINK_HEIGHT = 7
 
 

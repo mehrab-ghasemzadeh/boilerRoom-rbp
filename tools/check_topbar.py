@@ -16,8 +16,9 @@ import screen
 
 
 def pixel(canvas, x, y):
+    # Canvas stores a row MSB-first: the leftmost column of a byte is bit 7.
     index = y * dc.BYTES_PER_ROW + (x >> 3)
-    return (canvas.buffer[index] >> (x & 7)) & 1
+    return (canvas.buffer[index] & (0x80 >> (x & 7))) != 0
 
 
 def ink_columns(canvas, y0, y1):
