@@ -271,22 +271,27 @@ FAMILIES = {
     "ط": {"ظ": (1, "above")},
     "ر": {"ز": (1, "above"), "ژ": (3, "above")},
     "د": {"ذ": (1, "above")},
+    "ع": {"غ": (1, "above")},
+    "ف": {"ق": (2, "above")},
 }
 
 # The one family whose shared body is not a member of the family: a beh carries
 # a dot of its own, so the body has to be taken from it with the dot removed
 # rather than taken from a letter that is already bare.
-BASE_HAS_OWN_DOTS = {"ب": (1, "below")}
+BASE_HAS_OWN_DOTS = {"ب": (1, "below"), "ف": (1, "above")}
 
-# Dot shapes, as (column, row) offsets from the block's own top-left. All one
-# row tall: a row only has three rows below the baseline to give, and a two-row
-# triangle of dots does not fit under a beh or a ha without running off the
-# bottom of the panel. Three in a row also reads better than a triangle at this
-# size, where a triangle is two pixels against one.
+# Dot shapes, as (column, row) offsets from the block's own top-left. Every dot
+# is a single pixel and the pixels are held a column apart, so that two dots are
+# two dots and three are three: set shoulder to shoulder they fuse into one bar
+# of ink, and a ta with a bar above it is not a ta.
+#
+# One row tall, because the row has three rows below the baseline to give and a
+# two-row triangle will not fit under a beh or a ha without running off the
+# bottom of the panel.
 DOT_SHAPES = {
     1: ((0, 0),),
-    2: ((0, 0), (1, 0)),
-    3: ((0, 0), (1, 0), (2, 0)),
+    2: ((0, 0), (2, 0)),
+    3: ((0, 0), (2, 0), (4, 0)),
 }
 
 # How many dots each letter carries, and whether they sit above or below it.
@@ -566,6 +571,14 @@ def _ink_extent(columns: tuple[int, ...]) -> tuple[int, int]:
     return above, below
 
 
+def _as_mask(columns: tuple[int, ...]) -> tuple[list[list[bool]], int, int]:
+    """A column bitmap as the (mask, width, height) the component finder wants."""
+    width = len(columns)
+    height = max((c.bit_length() for c in columns), default=0)
+    mask = [[bool((column >> y) & 1) for column in columns] for y in range(height)]
+    return mask, width, height
+
+
 def _column_bits(columns: tuple[int, ...]) -> set[tuple[int, int]]:
     """Every inked pixel as ``(column, row)``."""
     out: set[tuple[int, int]] = set()
@@ -644,7 +657,14 @@ def _with_dots(
     bottom = max(y for _, y in ink)
     left = min(x for x, _ in ink)
     right = max(x for x, _ in ink)
-    shape = DOT_SHAPES[count]
+    shape = list(DOT_SHAPES[count])
+    body_width = right - left + 1
+    if 2 * count - 1 > body_width:
+        # Too narrow to hold the dots with a column between each. Set them
+        # shoulder to shoulder rather than growing the glyph past the letter:
+        # a wider glyph here is a wider advance and a word that does not add
+        # up, and a fused pair still reads better than a dot outside the letter.
+        shape = [(dx // 2 if dx else 0, dy) for dx, dy in shape]
     span = max(dx for dx, _ in shape) + 1
     height = max(dy for _, dy in shape) + 1
     centre = (left + right) // 2
@@ -680,6 +700,12 @@ def _with_dots(
     placed = {(x, BASELINE - ascender + y - lift) for x, y in ink}
     for dx, dy in shape:
         placed.add((centre - span // 2 + dx, dot_top + dy))
+
+    # A cluster can still reach the left edge on a letter that is only just wide
+    # enough, so shift the whole glyph rather than letting the column wrap.
+    leftmost = min(x for x, _ in placed)
+    if leftmost < 0:
+        placed = {(x - leftmost, y) for x, y in placed}
 
     width = max(x for x, _ in placed) + 1
     columns = [0] * width
@@ -788,6 +814,32 @@ def build() -> str:
                 lsb = drawn_member[4] if drawn_member else drawn[4]
                 table[(member, form)] = (new_columns, width, new_ascender, advance, lsb)
                 _check_fits(member, form, new_columns, new_ascender)
+
+    # Dotted letters that belong to no family - a noon, a yeh, a teh marbuta -
+    # have no bare sibling to draw their body from, so their own drawing is
+    # stripped of its marks and the marks put back properly. Only where the
+    # marks already stand clear: where they are welded on there is no body left
+    # to move, and adding dots to it would only make the letter worse.
+    for letter, (count, where) in DOTTED.items():
+        if letter in FAMILIES:
+            continue
+        for form in FORMS:
+            drawn = table.get((letter, form))
+            if drawn is None:
+                continue
+            if len(_components(*_as_mask(drawn[0]))) < 2:
+                continue  # welded on, or nothing to do
+            body = _drop_dot(drawn[0], True)
+            if not any(body):
+                continue
+            stamped = _with_dots(body, drawn[2], count, where)
+            if stamped is None:
+                continue
+            new_columns, width, new_ascender = stamped
+            table[(letter, form)] = (
+                new_columns, width, new_ascender, drawn[3], drawn[4]
+            )
+            _check_fits(letter, form, new_columns, new_ascender)
 
     lines = [
         '"""',

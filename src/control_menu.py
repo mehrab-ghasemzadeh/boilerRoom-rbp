@@ -251,8 +251,8 @@ BACK = "\x00back"
 # label whose end is cut off is a label nobody can act on — so these are written
 # to fit rather than translated word for word.
 FA_MAIN_ITEMS = (
-    ("1", "خوانش‌ها"),
-    ("2", "راه‌اندازی رله"),
+    ("1", "خوانش‌ ها"),
+    ("2", "راه‌ اندازی رله"),
     ("3", "حالت‌ها"),
     ("4", "دماها"),
     ("5", "تغییر زمان‌بندی"),

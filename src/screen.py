@@ -175,7 +175,7 @@ FA_TITLES = {
 
 # Lines that are fixed text on the panel rather than data the menu formats.
 FA_LINES = {
-    "Starting up ...": "در حال راه‌اندازی ...",
+    "Starting up ...": "در حال راه‌ اندازی ...",
     "Agent stopped.": "عامل متوقف شد.",
     "Keypad did not start:": "صفحه‌کلید اجرا نشد:",
     "no keypad fitted": "صفحه‌کلید وصل نیست",
@@ -279,9 +279,9 @@ FA_LINES = {
     "Note: the server keeps the last temperature it was given; this only changes what this device holds the boiler at.":
         "توجه: سرور آخرین دمای دریافتی را نگه می‌دارد؛ این تنها دمای نگه‌داشته‌شده توسط این دستگاه را تغییر می‌دهد.",
     "WARNING: it could not be written to disk, so it will not survive a restart.":
-        "هشدار: روی دیسک نوشته نشد، بنابراین پس از راه‌اندازی دوباره باقی نمی‌ماند.",
+        "هشدار: روی دیسک نوشته نشد، بنابراین پس از راه‌ اندازی دوباره باقی نمی‌ماند.",
     "WARNING: they could not be written to disk, so they will not survive a restart.":
-        "هشدار: روی دیسک نوشته نشدند، بنابراین پس از راه‌اندازی دوباره باقی نمی‌مانند.",
+        "هشدار: روی دیسک نوشته نشدند، بنابراین پس از راه‌ اندازی دوباره باقی نمی‌مانند.",
     "— enter a number (sensor polling continues in background).":
         "— یک شماره وارد کنید (نمونه‌برداری حسگر در پس‌زمینه ادامه دارد).",
     "Reported to the server.": "به سرور ارسال شد.",
@@ -336,9 +336,9 @@ FA_LINES = {
     "Left unsigned.": "بدون ورود رها شد.",
     "The boilers keep to": "دیگ‌ها به",
     "the cached schedule.": "زمان‌بندی ذخیره‌شده پایبند می‌مانند.",
-    "Restart to be asked.": "برای پرسش دوباره راه‌اندازی کنید.",
+    "Restart to be asked.": "برای پرسش دوباره راه‌ اندازی کنید.",
     "Not signed in yet.": "هنوز وارد نشده‌اید.",
-    "provisioning.": "راه‌اندازی اولیه.",
+    "provisioning.": "راه‌ اندازی اولیه.",
     # Rule and exception detail lines. Each is built as an f-string, so these
     # are the fixed parts; the values beside them stay as they are.
     "Rule ": "قانون ",
@@ -375,7 +375,7 @@ FA_LINES = {
     "No answer from the server.": "پاسخی از سرور نیامد.",
     "Agent stopped.": "عامل متوقف شد.",
     "  Agent stopped.": "  عامل متوقف شد.",
-    "  Starting up ...": "  در حال راه‌اندازی ...",
+    "  Starting up ...": "  در حال راه‌ اندازی ...",
     "Mode reported to the server.": "حالت به سرور ارسال شد.",
     "Keypad did not start:": "صفحه‌کلید اجرا نشد:",
     "  Keypad did not start:": "  صفحه‌کلید اجرا نشد:",
