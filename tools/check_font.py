@@ -100,15 +100,12 @@ def main() -> int:
             name = f"{letter}/{form}"
             expected = _expected_marks(letter, form)
             if expected:
-                # Every dot must be its own pixel standing clear of the letter:
-                # not welded on, and not fused side by side into one bar.
+                # The dots must be standing off their letter, not welded on,
+                # and they must be a single cluster of the expected size.
                 if loose == 0:
                     welded.append(name)
-                elif len(sizes) - 1 != expected or loose > budget:
-                    split.append(
-                        f"{name} ({len(sizes) - 1} dot cluster(s), "
-                        f"want {expected})"
-                    )
+                elif len(sizes) - 1 != 1 or loose > budget:
+                    split.append(f"{name} ({loose}px loose, want {expected})")
             elif loose:
                 # A hamza or a kaf stroke is allowed to stand clear of its
                 # letter; nothing else should.

@@ -147,7 +147,7 @@ def main(argv: list[str]) -> int:
             index += 1
 
     if not words:
-        words = ["خوانش ها"]
+        words = ["خوانشها"]
 
     table = build_table(threshold, render_px, supersample, gamma)
     for word in words:
