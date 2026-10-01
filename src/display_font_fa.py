@@ -28,7 +28,7 @@ BASELINE = 10
 
 # Letters that carry dots, and how many: published so the checker can
 # verify them without rendering the source font a second time.
-DOTTED = {'ب': (1, 'below'), 'ت': (2, 'above'), 'ث': (3, 'above'), 'پ': (3, 'below'), 'ج': (1, 'below'), 'چ': (3, 'below'), 'خ': (1, 'above'), 'ش': (3, 'above'), 'ض': (1, 'above'), 'ظ': (1, 'above'), 'ز': (1, 'above'), 'ژ': (3, 'above'), 'ذ': (1, 'above'), 'ن': (1, 'above'), 'ف': (1, 'above'), 'ق': (2, 'above'), 'غ': (1, 'above'), 'ة': (2, 'above')}
+DOTTED = {'ب': (1, 'below'), 'ت': (2, 'above'), 'ث': (3, 'above'), 'پ': (3, 'below'), 'ج': (1, 'inside'), 'چ': (3, 'inside'), 'خ': (1, 'above'), 'ش': (3, 'above'), 'ض': (1, 'above'), 'ظ': (1, 'above'), 'ز': (1, 'above'), 'ژ': (3, 'above'), 'ذ': (1, 'above'), 'ن': (1, 'above'), 'ف': (1, 'above'), 'ق': (2, 'above'), 'غ': (1, 'above'), 'ة': (2, 'above')}
 YEH_BARE_FORMS = ('initial', 'medial')
 
 GLYPHS = {
@@ -99,13 +99,13 @@ GLYPHS = {
         'medial': ((9, 13, 13, 8), 4, 4, 3.96, -200),
     },
     'ج': {
-        'isolated': ((61, 71, 323, 67, 67, 65), 6, 6, 6.996, -200),
-        'final': ((121, 69, 71, 326, 78, 10, 8), 7, 6, 7.326, -200),
+        'isolated': ((61, 71, 67, 75, 67, 65), 6, 4, 6.996, -200),
+        'final': ((121, 69, 87, 70, 78, 10, 8), 7, 4, 7.326, -200),
         'initial': ((8, 11, 41, 14, 6, 4), 6, 4, 6.996, -200),
         'medial': ((8, 11, 9, 46, 6, 12, 8, 8), 8, 4, 7.326, -200),
     },
     'چ': {
-        'isolated': ((61, 327, 323, 323, 67, 65), 6, 6, 6.996, -200),
+        'isolated': ((61, 71, 83, 83, 83, 65), 6, 4, 6.996, -200),
         'final': ((121, 69, 327, 326, 334, 10, 8), 7, 6, 7.326, -200),
         'initial': ((8, 43, 41, 46, 6, 4), 6, 4, 6.996, -200),
         'medial': ((8, 11, 41, 46, 38, 12, 8, 8), 8, 4, 7.326, -200),

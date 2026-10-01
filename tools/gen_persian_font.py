@@ -265,7 +265,7 @@ FORMS = ("isolated", "final", "initial", "medial")
 # other member's dots as (how many, above or below).
 FAMILIES = {
     "ب": {"ت": (2, "above"), "ث": (3, "above"), "پ": (3, "below")},
-    "ح": {"ج": (1, "below"), "چ": (3, "below"), "خ": (1, "above")},
+    "ح": {"ج": (1, "inside"), "چ": (3, "inside"), "خ": (1, "above")},
     "س": {"ش": (3, "above")},
     "ص": {"ض": (1, "above")},
     "ط": {"ظ": (1, "above")},
@@ -289,18 +289,20 @@ DOT_SHAPES = {
     3: ((0, 0), (1, 0), (2, 0)),
 }
 
-# How many dots each letter carries, and whether they sit above or below it.
-# The family members above are covered by their base's entry where the base is
-# dotted too. Published into the generated module so the checker can ask the
-# same question from the same answer rather than re-deriving it by rendering
-# the font a second time, which is how the two came to disagree.
+# How many dots each letter carries, and where they sit relative to it:
+# ``above``, ``below``, or ``inside`` for the jeem family, whose dot is written
+# into the bowl of the letter rather than hung off it. The family members above
+# are covered by their base's entry where the base is dotted too. Published into
+# the generated module so the checker can ask the same question from the same
+# answer rather than re-deriving it by rendering the font a second time, which is
+# how the two came to disagree.
 DOTTED = {
     "ب": (1, "below"),
     "ت": (2, "above"),
     "ث": (3, "above"),
     "پ": (3, "below"),
-    "ج": (1, "below"),
-    "چ": (3, "below"),
+    "ج": (1, "inside"),
+    "چ": (3, "inside"),
     "خ": (1, "above"),
     "ش": (3, "above"),
     "ض": (1, "above"),
@@ -619,6 +621,112 @@ def _drop_dot(columns: tuple[int, ...], below: bool) -> tuple[int, ...]:
     )
 
 
+def _bowl_cells(body: tuple[int, ...]) -> set[tuple[int, int]]:
+    """
+    The hollow inside a bowl: empty cells walled by ink above, below and to the left.
+
+    This is the pocket a jeem's dot belongs in. It is not a closed hole - a ha's
+    bowl opens to the right - which is why the test is for those three walls
+    rather than a flood fill from outside, which would walk straight in through
+    the opening and find nothing.
+    """
+    ink = _column_bits(body)
+    if not ink:
+        return set()
+
+    left = min(x for x, _ in ink)
+    right = max(x for x, _ in ink)
+    top = min(y for _, y in ink)
+    bottom = max(y for _, y in ink)
+
+    cells = set()
+    for y in range(top, bottom + 1):
+        for x in range(left, right + 1):
+            if (x, y) in ink:
+                continue
+            if not any((x, other) in ink for other in range(top, y)):
+                continue
+            if not any((x, other) in ink for other in range(y + 1, bottom + 1)):
+                continue
+            if not any((other, y) in ink for other in range(left, x)):
+                continue
+            cells.add((x, y))
+    return cells
+
+
+def _largest_region(cells: set[tuple[int, int]]) -> set[tuple[int, int]]:
+    """The biggest 4-connected group within ``cells``."""
+    seen: set[tuple[int, int]] = set()
+    best: set[tuple[int, int]] = set()
+
+    for start in cells:
+        if start in seen:
+            continue
+        group: set[tuple[int, int]] = set()
+        stack = [start]
+        seen.add(start)
+        while stack:
+            x, y = stack.pop()
+            group.add((x, y))
+            for neighbour in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                if neighbour in cells and neighbour not in seen:
+                    seen.add(neighbour)
+                    stack.append(neighbour)
+        if len(group) > len(best):
+            best = group
+
+    return best
+
+
+def _place_in_cavity(
+    cavity: set[tuple[int, int]],
+    ink: set[tuple[int, int]],
+    shape: tuple[tuple[int, int], ...],
+) -> set[tuple[int, int]] | None:
+    """
+    Put a dot cluster in the bowl, clear of the letter's own ink.
+
+    Every placement that keeps the whole cluster inside the cavity and touching
+    nothing is a candidate; the one nearest the middle of the cavity wins, so
+    the dot sits in the belly of the bowl rather than hard against one wall.
+    Returns None when no placement is clean, which is the signal to put the
+    dots below the letter after all.
+    """
+    span = max(dx for dx, _ in shape) + 1
+    height = max(dy for _, dy in shape) + 1
+
+    if len(cavity) < span * height:
+        return None
+
+    centre_x = sum(x for x, _ in cavity) / len(cavity)
+    centre_y = sum(y for _, y in cavity) / len(cavity)
+
+    best: set[tuple[int, int]] | None = None
+    best_distance = 0.0
+
+    for origin_x, origin_y in cavity:
+        cells = {(origin_x + dx, origin_y + dy) for dx, dy in shape}
+        if not cells <= cavity:
+            continue
+        # A dot one pixel off the letter is a dot welded to it, which is the
+        # fault this font exists to avoid, so the whole 8-neighbourhood counts.
+        if any(
+            (x + dx, y + dy) in ink
+            for x, y in cells
+            for dx in (-1, 0, 1)
+            for dy in (-1, 0, 1)
+        ):
+            continue
+
+        distance = abs(origin_x + (span - 1) / 2 - centre_x) + abs(
+            origin_y + (height - 1) / 2 - centre_y
+        )
+        if best is None or distance < best_distance:
+            best, best_distance = cells, distance
+
+    return best
+
+
 def _with_dots(
     body: tuple[int, ...],
     ascender: int,
@@ -648,6 +756,24 @@ def _with_dots(
     span = max(dx for dx, _ in shape) + 1
     height = max(dy for _, dy in shape) + 1
     centre = (left + right) // 2
+
+    if where == "inside":
+        # A jeem's dot is written into the bowl, not hung under it. The body
+        # does not move and the glyph does not grow, so the letters around it
+        # keep the same advance and the same place on the baseline.
+        cavity = _largest_region(_bowl_cells(body))
+        dots = _place_in_cavity(cavity, ink, shape)
+        if dots is not None:
+            placed = set(ink) | dots
+            width = max(x for x, _ in placed) + 1
+            columns = [0] * width
+            for x, y in placed:
+                columns[x] |= 1 << y
+            return tuple(columns), width, ascender
+        # No room for the dots in the bowl - the head of a jeem in its initial
+        # and medial forms is a shallow wedge with no hollow to speak of. Fall
+        # through and hang them underneath, which is what those forms want.
+        where = "below"
 
     # The body's own extent, in panel rows. ``lift`` is how far the whole glyph
     # has to rise to make room under it; the body moves with it.
