@@ -117,19 +117,16 @@ def _has_mark(
     grey: list[list[int]], width: int, height: int, budget: int
 ) -> bool:
     """
-    Whether this glyph carries a dot, hamza or inner stroke of its own.
+    Whether this glyph's outline has anything standing off its body.
 
-    Asked of the glyph rather than of a table of letters, because a letter's
-    mark is not a property of the letter: a Persian yeh carries two dots on its
-    own and none once it joins, and a final heh is written bare. Whether the
-    mark is there is something the font knows and this file does not, so it is
-    measured — if any cut in the range leaves a small piece standing off the
-    body, the mark is present in the outline and has to be cut free of it.
-
-    Getting this wrong is not cosmetic. The noon of "خوانشها" is in its initial
-    form, and a dot welded to the letter it belongs to is precisely the fault
-    this whole exercise is about; a check that only looked at the isolated form
-    would pass it straight through.
+    Kept as a fallback for callers that have only a codepoint. It guesses, and it
+    guesses wrong often enough to matter: a lam's ascender ends in a small flag
+    that parts company with the stem at some cuts, so a lam reads as a letter
+    with a dot. Believing that costs the lam its stroke weight — the search
+    then has to find a cut that keeps the flag detached, which is a far higher
+    cut than the letter needs, and the stem comes out a pixel thin with a hook
+    floating beside it. ``_carries_mark`` asks the font's own tables instead and
+    is what the build uses.
     """
     for cut in THRESHOLD_SEARCH:
         mask = [[grey[y][x] > cut for x in range(width)] for y in range(height)]
@@ -320,6 +317,30 @@ DOTTED = {
 # A yeh is dotted when it stands alone and bare once it joins, which is why it
 # cannot simply be listed.
 YEH_BARE_FORMS = ("initial", "medial")
+
+# Letters carrying a mark that is not one of the dots in DOTTED: the hamza
+# family, kaf's and gaaf's inner stroke, and the heh-with-yeh.
+EXTRA_MARKS = frozenset(("ء", "آ", "أ", "إ", "ؤ", "ئ", "ک", "ک", "گ", "ۀ"))
+
+
+def _carries_mark(letter: str, form: str) -> bool:
+    """
+    Whether this letter, in this form, has a mark that must stand clear.
+
+    Asked of the tables rather than measured off the raster, because measuring
+    it is what made a lam look like a dotted letter: its ascender ends in a
+    small flag that separates from the stem at some cuts, and a search told to
+    keep that flag detached settles on a much higher cut than the letter needs.
+    The lam came out a pixel thin with a hook floating beside it.
+
+    Which letters carry a mark is a fact about the script, and this file already
+    states it three times over — DOTTED for the dots, EXTRA_MARKS for the rest,
+    and YEH_BARE_FORMS for the yeh that loses its dots when it joins. Guessing
+    it back out of the pixels only invited the font to disagree with itself.
+    """
+    if letter == "ی":
+        return form not in YEH_BARE_FORMS
+    return letter in DOTTED or letter in EXTRA_MARKS
 
 # How far the dots stand off the body. One clear pixel: any closer and the dots
 # weld into the letter they belong to, which is the mistake this font spent most
@@ -513,6 +534,8 @@ def rasterise(
     codepoint: int,
     *,
     mark_budget: int = MAX_MARK_PIXELS,
+    letter: str | None = None,
+    form: str | None = None,
 ) -> tuple[tuple[int, ...], int, int] | None:
     """
     Draw one codepoint and return ``(columns, width, ascender)``.
@@ -526,14 +549,21 @@ def rasterise(
     The glyph is drawn on its own rather than inside a probe word: a codepoint
     that is already a presentation form is not reshaped by HarfBuzz, so
     rendering it alone gives the same shape it would take in a word.
+
+    Pass ``letter`` and ``form`` to have the mark looked up in the tables. Left
+    out, it falls back to measuring the raster, which is right often enough to
+    be tempting and wrong often enough to cost a letter its stroke weight.
     """
     grey, width, height, pen, baseline_row = _render_grey(font_path, codepoint)
     if grey is None:
         return None
 
-    cut = _choose_threshold(
-        grey, width, height, _has_mark(grey, width, height, mark_budget), mark_budget
-    )
+    if letter is None or form is None:
+        mark_expected = _has_mark(grey, width, height, mark_budget)
+    else:
+        mark_expected = _carries_mark(letter, form)
+
+    cut = _choose_threshold(grey, width, height, mark_expected, mark_budget)
     mask = [[grey[y][x] > cut for x in range(width)] for y in range(height)]
     if not any(any(row) for row in mask):  # everything too faint to keep
         return None
@@ -851,6 +881,8 @@ def build() -> str:
                 FONT_PATH,
                 codepoint,
                 mark_budget=MARK_BUDGET.get(letter, MAX_MARK_PIXELS),
+                letter=letter,
+                form=form,
             )
             if raster is not None:
                 columns, width, ascender, lsb = raster
@@ -871,7 +903,12 @@ def build() -> str:
     # the alef is at that end and an alef does not connect.
     for letters, (isolated_cp, final_cp) in LIGATURES.items():
         for form, codepoint in (("isolated", isolated_cp), ("final", final_cp)):
-            raster = rasterise(FONT_PATH, ord(codepoint))
+            # Keyed by the two letters, so the tables answer for it: a lam-alef
+            # carries no mark, and left to measure its own the thin flick at the
+            # top of the lam reads as one and drags the cut up with it.
+            raster = rasterise(
+                FONT_PATH, ord(codepoint), letter=letters, form=form
+            )
             if raster is None:
                 continue
             columns, width, ascender, lsb = raster

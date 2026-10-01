@@ -72,7 +72,9 @@ def build_table(threshold: int, render_px: int, supersample: int, gamma: float =
         for letter in gen.LETTERS:
             for form in gen.FORMS:
                 codepoint = gen.form_codepoint(hb_font, letter, form)
-                raster = gen.rasterise(gen.FONT_PATH, codepoint)
+                raster = gen.rasterise(
+                    gen.FONT_PATH, codepoint, letter=letter, form=form
+                )
                 if raster is not None:
                     columns, width, ascender, lsb = raster
                     advance = gen.form_advance(face, hb_font, letter, form)
@@ -88,7 +90,9 @@ def build_table(threshold: int, render_px: int, supersample: int, gamma: float =
                 )
         for letters, (iso, fin) in gen.LIGATURES.items():
             for form, codepoint in (("isolated", iso), ("final", fin)):
-                raster = gen.rasterise(gen.FONT_PATH, ord(codepoint))
+                raster = gen.rasterise(
+                    gen.FONT_PATH, ord(codepoint), letter=letters, form=form
+                )
                 if raster is None:
                     continue
                 columns, width, ascender, lsb = raster
