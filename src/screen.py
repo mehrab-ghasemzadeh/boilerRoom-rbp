@@ -506,6 +506,48 @@ FA_FRAGMENTS = (
 )
 
 
+# The link indicator in the title bar, as (column, row) text. Three stacked
+# bars, the usual signal mark. Connected they are solid; disconnected they are
+# struck through. The slash rather than a dimmer or hollower version of the
+# same shape, because at five pixels across "less ink" and "no ink" are the same
+# picture, and a heating panel that has lost the server has to say so in a way
+# nobody has to squint at.
+LINK_UP = (
+    "...#.",
+    "..###",
+    ".####",
+    "#####",
+    "...#.",
+    "..###",
+    ".####",
+)
+LINK_DOWN = (
+    "...#.",
+    "#..##",
+    "##..#",
+    "###..",
+    "...#.",
+    "#..##",
+    "##..#",
+)
+LINK_WIDTH = 5
+LINK_HEIGHT = 7
+
+
+def _draw_link(canvas, x: int, y: int, connected: bool) -> None:
+    """
+    Draw the connection icon with its top-left at ``(x, y)``.
+
+    The bar is filled and everything else is drawn inverted into it, so ``on``
+    is False throughout.
+    """
+    art = LINK_UP if connected else LINK_DOWN
+    for row, line in enumerate(art):
+        for col, bit in enumerate(line):
+            if bit == "#":
+                canvas.pixel(x + col, y + row, on=False)
+
+
 def _clock_text() -> str:
     """
     The time for the title bar, as HH:MM.
@@ -559,10 +601,16 @@ def _entry_width(entry: tuple[str, str]) -> int:
 class Screen:
     """Draws screens on a display and reads the keypad that answers them."""
 
-    def __init__(self, display, device, *, echo=None):
+    def __init__(self, display, device, *, echo=None, link=None):
         self.display = display
         self.device = device
         self.canvas = Canvas()
+
+        # Whether the link to the server is up, asked fresh at every frame so a
+        # reconnect shows up without waiting for the next redraw. None means the
+        # caller does not know, which is drawn as disconnected rather than as a
+        # reassuring blank.
+        self.link = link
 
         # The mock display prints its frames; routing them through the menu's
         # own output keeps them from interleaving with it.
@@ -606,17 +654,17 @@ class Screen:
         self,
         title: str,
         *,
-        right: str = "",
         legend: tuple[tuple[str, str], ...] = (),
     ) -> None:
         """
         Clear the canvas and draw the title bar and legend strip.
 
-        The bar carries the page title and the time, which is what an operator
-        standing in front of it needs to know: where they are and how late it
-        is. They are placed from opposite ends of the bar and the title is cut
-        to whatever room is left, so the two can never overlap however long the
-        title or however long the counter beside it turns out to be.
+        The bar carries the page title, the connection icon and the time, which
+        is what an operator standing in front of it needs to know: where they
+        are, whether the device can still reach the server, and how late it is.
+        They are placed from opposite ends of the bar and the title is cut to
+        whatever room is left, so no two can ever overlap however long the title
+        turns out to be.
         """
         canvas = self.canvas
         canvas.clear()
@@ -625,32 +673,28 @@ class Screen:
         canvas.fill_rect(0, 0, WIDTH, TITLE_HEIGHT, True)
 
         clock = _clock_text()
-        counter = right
+        connected = bool(self.link and self.link())
         # Width taken off the title's end before anything is drawn: the clock,
-        # the counter if there is one, and a gap either side of each so neither
-        # touches the title's last letter.
-        used = text_width(clock)
-        if counter:
-            used += text_width(counter) + 2
+        # the connection icon, and a gap either side of each so neither touches
+        # the title's last letter.
+        used = text_width(clock) + LINK_WIDTH + 2
         room = max(0, BAR_COLUMNS - used - 4)
         shown = truncate(title.upper(), room)
 
         rtl = has_rtl(shown)
         # The title sits on the side the reader starts from and the clock on the
         # side they finish, which for Persian is the right and the left. The
-        # counter hugs the clock: it qualifies the list, not the page.
+        # icon hugs the clock: it describes the link, not the page.
         if rtl:
             canvas.text_right(WIDTH - TEXT_X, 0, shown, on=False)
+            icon_x = TEXT_X + text_width(clock) + 2
             canvas.text(TEXT_X, 0, clock, on=False)
-            if counter:
-                canvas.text(TEXT_X + text_width(clock) + 2, 0, counter, on=False)
+            _draw_link(canvas, icon_x, (TITLE_HEIGHT - LINK_HEIGHT) // 2, connected)
         else:
             canvas.text(TEXT_X, 0, shown, on=False)
             canvas.text_right(WIDTH - TEXT_X, 0, clock, on=False)
-            if counter:
-                canvas.text_right(
-                    WIDTH - TEXT_X - text_width(clock) - 2, 0, counter, on=False
-                )
+            icon_right = WIDTH - TEXT_X - text_width(clock) - 2
+            _draw_link(canvas, icon_right - LINK_WIDTH, (TITLE_HEIGHT - LINK_HEIGHT) // 2, connected)
 
         self._legend(legend)
 
@@ -756,7 +800,7 @@ class Screen:
                 top = index - BODY_ROWS + 1
             top = max(0, min(top, max(0, total - BODY_ROWS)))
 
-            self.frame(title, right=f"{index + 1}/{total}", legend=strip)
+            self.frame(title, legend=strip)
 
             for slot in range(BODY_ROWS):
                 position = top + slot
@@ -815,8 +859,7 @@ class Screen:
             else:
                 strip = ((cap_for(ENTER), _label("Done")), (cap_for(CANCEL), _label("Back")))
 
-            right = f"{min(top + BODY_ROWS, total)}/{total}" if total > BODY_ROWS else ""
-            self.frame(title, right=right, legend=strip)
+            self.frame(title, legend=strip)
 
             for slot in range(BODY_ROWS):
                 position = top + slot
@@ -955,7 +998,7 @@ class Screen:
                 top = index - BODY_ROWS + 1
             top = max(0, min(top, max(0, total - BODY_ROWS)))
 
-            self.frame(title, right=f"{index + 1}/{total}", legend=strip)
+            self.frame(title, legend=strip)
 
             for slot in range(BODY_ROWS):
                 position = top + slot
@@ -1027,7 +1070,7 @@ class Screen:
                 top = index - BODY_ROWS + 1
             top = max(0, min(top, max(0, total - BODY_ROWS)))
 
-            self.frame(title, right=f"{index + 1}/{total}", legend=strip)
+            self.frame(title, legend=strip)
 
             for slot in range(BODY_ROWS):
                 position = top + slot

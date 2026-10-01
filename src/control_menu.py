@@ -2898,7 +2898,10 @@ async def _start_screen(state: RuntimeState, device) -> Screen | None:
     for line in getattr(display, "describe", list)():
         await state.log(f"[menu] {line}")
 
-    view = Screen(display, device, echo=state.write)
+    # Read fresh at every frame rather than sampled once here, so the icon in
+    # the title bar follows a reconnect instead of showing whatever the link was
+    # doing when the menu came up.
+    view = Screen(display, device, echo=state.write, link=lambda: state.ws_connected)
     set_screen(view)
     await view.splash("Boiler room", ["", "  Starting up ...", ""])
     return view

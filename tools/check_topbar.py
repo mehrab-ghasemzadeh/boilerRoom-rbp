@@ -43,11 +43,12 @@ def runs(cols):
     return [(a, b) for a, b in out]
 
 
-def check(title, counter):
+def check(title, connected=True):
     canvas = dc.Canvas()
     v = screen.Screen.__new__(screen.Screen)
     v.canvas = canvas
-    v.frame(title, right=counter)
+    v.link = lambda: connected
+    v.frame(title)
     bar = ink_columns(canvas, 0, 12)
     spans = runs(bar)
     overlap = False
@@ -55,19 +56,18 @@ def check(title, counter):
         if spans[i][1] + 1 >= spans[i + 1][0]:
             overlap = True
     flag = "OVERLAP" if overlap else "ok"
-    print("%-46s counter=%-8s spans=%s  %s" % (
-        title[:44], repr(counter), spans, flag))
+    print("%-46s link=%-11s spans=%s  %s" % (
+        title[:44], repr(connected), spans, flag))
     return overlap
 
 
 def main():
     titles = list(screen.FA_TITLES)[:40]
     titles.append("A very long latin title that will not possibly fit here")
-    counters = ["", "1/3", "12/128", "128/128", "7/8"]
     bad = 0
-    for counter in counters:
+    for connected in (True, False):
         for title in titles:
-            if check(title, counter):
+            if check(title, connected):
                 bad += 1
     print("\n%d overlapping case(s)" % bad)
     return 1 if bad else 0
