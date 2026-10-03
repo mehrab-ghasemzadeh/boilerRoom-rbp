@@ -13,10 +13,18 @@ is width=12, ascender=10 (so the 11 rows sit just above the baseline),
 advance=12 (letters tile edge to edge and the shaper's ink-to-ink spacing puts
 a single blank column between words), lsb=0.
 
-Letters or forms the sketch does not have -- the lam-alef ligatures, and a
-couple of hamza variants -- are omitted rather than faked, and the shaper
-degrades the way it already does: it asks for isolated, then final, then
-initial, then medial, and falls back to a blank piece when none exists.
+The joining line is row 6. An *initial* design has to reach left along it to
+meet the letter that follows, a *final* design has to reach right along it to
+meet the letter before, and a *medial* design has to do both.
+
+A label that appears twice is an error rather than a last-one-wins overwrite.
+That failure mode is not hypothetical: two blocks labelled ``ح - Isolated`` sat
+in the file at once, the dotted second one silently replaced the first, and
+``خ`` went missing from the font entirely without anything reporting it.
+
+Letters or forms the sketch does not have are omitted rather than faked, and
+the shaper degrades the way it already does: it asks for isolated, then final,
+then initial, then medial, and falls back to a blank piece when none exists.
 """
 
 from __future__ import annotations
@@ -40,12 +48,14 @@ def parse_designs(path: str) -> dict[str, list[list[int]]]:
         text = fh.read()
 
     designs: dict[str, list[list[int]]] = {}
+    seen: dict[str, int] = {}
     label_pattern = re.compile(
         r"'([^']+)\s*-\s*(Isolated|Initial|Medial|Final)'\s*:\s*\[",
     )
 
     for match in label_pattern.finditer(text):
         label = f"{match.group(1).strip()} - {match.group(2)}"
+        line = text.count("\n", 0, match.start()) + 1
         pos = match.end()
         depth = 1
         end = pos
@@ -65,8 +75,33 @@ def parse_designs(path: str) -> dict[str, list[list[int]]]:
             row = [int(x) for x in row_match.group(1).split(",") if x.strip()]
             rows.append(row)
 
-        if rows:
-            designs[label] = rows
+        if not rows:
+            continue
+
+        # Two blocks sharing a label is how a letter goes missing without
+        # anything complaining, so it stops the build instead.
+        if label in designs:
+            raise SystemExit(
+                "%s:%d: duplicate design %r; the first is on line %d. Each "
+                "letter-form needs exactly one block, so rename one of them."
+                % (path, line, label, seen[label])
+            )
+        seen[label] = line
+
+        for index, row in enumerate(rows):
+            if len(row) != GLYPH_W:
+                raise SystemExit(
+                    "%s:%d: %s row %d has %d columns, expected %d."
+                    % (path, line, label, index, len(row), GLYPH_W)
+                )
+        if len(rows) != GLYPH_H:
+            raise SystemExit(
+                "%s:%d: %s has %d rows, expected %d. A short grid renders as a "
+                "letter with its foot cut off."
+                % (path, line, label, len(rows), GLYPH_H)
+            )
+
+        designs[label] = rows
 
     return designs
 
@@ -128,11 +163,16 @@ Keyed by ``(letter, joining position)`` where the position is one of
 * ``advance`` - how far to step the pen;
 * ``lsb`` - kept for the tuple shape the shaper expects, always 0 here.
 
-Letters that only join on one side - alef, dal, ra, za, waw and their
-hamza variants - have no initial or medial form in the sketch, and
-``text_shaper`` asks for their isolated shape instead. The lam-alef
-ligatures are not drawn in the sketch at all, so they are absent here and the
-shaper falls back to drawing the two letters separately.
+Letters that only join on one side - alef, dal, ra, za, waw and their hamza
+variants - have no initial or medial form in the sketch, and ``text_shaper``
+asks for their isolated shape instead.
+
+Keys may also be two characters wide: the lam-alef ligatures ``لا``, ``لأ`` and
+``لآ`` are single designs under a two-letter key, which is what
+``text_shaper._ligature_at`` looks up.
+
+Not drawn at all: ء ؤ ة ۀ إ, none of which the UI uses. A codepoint with no
+glyph here is drawn by the shaper as a one-column gap rather than faked.
 """
 
 from __future__ import annotations

@@ -25,10 +25,15 @@ Persian runs reverse, numbers inside them do not. ``68`` must read as 68, and a
 panel full of temperatures and cut-out thresholds is precisely where getting
 that wrong would be dangerous.
 
-No dependency on the canvas or the hardware, so it can be checked on a laptop:
+No dependency on the canvas or the hardware, so it can be checked on a laptop.
+The pieces come back in drawing order, left to right, so the first one listed
+is the last letter of the word, and a lam-alef has already collapsed into the
+one ligature glyph that stands for it:
 
     >>> [piece.letter for piece in shape("سلام")]
-    ['س', 'ل', 'ا', 'م']
+    ['م', 'لا', 'س']
+    >>> [piece.form for piece in shape("سلام")]
+    ['isolated', 'final', 'initial']
 """
 
 from __future__ import annotations
@@ -75,12 +80,20 @@ _GAP = 1
 # letters that spell it.
 _LIGATURE_SECOND = "اأإآ"
 
-# Codepoints that exist only to change how the text around them joins, and take
-# up no room of their own. ZWNJ is the one that matters: it is how Persian
-# writes a half-space inside a word, as in "خوانش‌ها", where the letters either
-# side must *not* join. Rendering it as a glyph would draw a box where nothing
-# is, and letting it into the run would break joining that should hold.
-_INVISIBLE = frozenset("‌‍‎‏⁦⁧⁨⁩")
+# A zero-width non-joiner is the one invisible character that is not just
+# invisible: it is how Persian writes a half-space inside a word, as in
+# "خوانش‌ها", where the letters either side must *not* join. Drawing it as a
+# glyph would put a box where nothing is, and letting it into a run without
+# regard would join ش to ه, which is the opposite of what it is there to say.
+#
+# So it is kept as a token in the run. It joins nothing to anything, it has no
+# glyph, and it takes up no ink - which is exactly a half-space.
+_JOIN_BREAKER = "‌"
+
+# The rest take up no room and have no effect on joining either. They are
+# bidirectional formatting controls rather than letters, so they are dropped:
+# keeping them as tokens would break a join they have nothing to do with.
+_INVISIBLE = frozenset("‎‏؜⁦⁧⁨⁩")
 
 # Anything at or above this is Persian script or a related block. The canvas
 # uses this to decide whether a string needs the slow path at all, and the
@@ -355,11 +368,24 @@ def _runs(text: str) -> list[tuple[bool, str]]:
             runs.append((False, " "))
             continue
 
+        if character == _JOIN_BREAKER:
+            # Kept, not dropped. It carries no ink and it is not a letter, but
+            # it sits between two letters precisely to stop them joining, so it
+            # has to stay in the run for that to happen. Drawing it as nothing
+            # is handled where a token with no glyph is turned into a blank.
+            rtl = True
+            if current_rtl is None or rtl == current_rtl:
+                current.append(character)
+                current_rtl = rtl
+            else:
+                runs.append((current_rtl, "".join(current)))
+                current = [character]
+                current_rtl = rtl
+            continue
+
         if character in _INVISIBLE:
-            # ZWNJ and friends. They are not a gap and not a letter: they tell
-            # the shaper not to join across a position. Drawn as nothing, and
-            # dropped from the run so they cannot affect joining either — the
-            # space that follows them in "خوانش‌ها" is what ends the run.
+            # Bidi formatting controls: no ink, no width, and nothing to say
+            # about joining. Dropped so they cannot interrupt a word.
             continue
 
         rtl = _is_rtl_letter(character)
@@ -522,6 +548,23 @@ def _space(pieces: list[Piece]) -> list[Piece]:
             at[index] += adjustment
         if hi is not None:
             previous_hi = at[index] + hi
+        else:
+            # No ink at all: a space, or a codepoint the glyph table has nothing
+            # for. Dropping the chain here rather than carrying it forward is
+            # the point. Leaving the previous letter's ink edge in place would
+            # make the next glyph glue itself to a position where nothing is
+            # actually drawn, which is what pulled a word apart around a
+            # missing letter, and what stopped a word from being separated from
+            # the one before it by a space.
+            previous_hi = None
+
+    # A letter may legitimately have to reach back past its own origin to meet
+    # the ink before it, but the pen must never step backwards: a negative
+    # advance draws the next piece on top of this one. Clamping here keeps a
+    # design mistake showing up as a visible gap instead of a scrambled line.
+    for index in range(1, len(at)):
+        if at[index] < at[index - 1]:
+            at[index] = at[index - 1]
 
     # The canvas draws each piece at the running total of the steps before it and
     # steps on by this piece's own advance, so the step a piece carries is the
