@@ -171,7 +171,7 @@ Keys may also be two characters wide: the lam-alef ligatures ``لا``, ``لأ`` 
 ``لآ`` are single designs under a two-letter key, which is what
 ``text_shaper._ligature_at`` looks up.
 
-Not drawn at all: ء ؤ ة ۀ إ, none of which the UI uses. A codepoint with no
+Not drawn at all: ء ؤ ة ۀ إ ئ, none of which the UI uses. A codepoint with no
 glyph here is drawn by the shaper as a one-column gap rather than faked.
 """
 
