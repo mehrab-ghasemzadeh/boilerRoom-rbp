@@ -73,8 +73,15 @@ _JOINING = {
     "ء": "U",
 }
 
-# A gap between letters, so a word does not read as one long word.
-_GAP = 1
+# The width of a zero-width joiner standing in for a gap inside a word, in
+# columns between the ink either side of it. Two columns of step leaves one
+# blank column, which is what stops the letters around it reading as joined.
+_GAP = 2
+
+# The width of a space. Three columns of step puts the ink of the next word
+# two columns clear of the ink of the last, so the space itself is two blank
+# pixels wide - see :func:`_space`, which is what actually spends it.
+_SPACE_ADVANCE = 3
 
 # Lam plus an alef is one glyph, not two. The glyph table is keyed by the two
 # letters that spell it.
@@ -457,7 +464,7 @@ def shape(text: str) -> list[Piece]:
             # rightmost one, because that is where reading starts.
             group = _shape_rtl_run(run)
         elif run == " ":
-            group = [Piece(" ", "isolated", (), 0, 0, 3, rtl=False)]
+            group = [Piece(" ", "isolated", (), 0, 0, _SPACE_ADVANCE, rtl=False)]
         else:
             # ASCII and digits, drawn left to right exactly as typed.
             group = []
@@ -527,44 +534,82 @@ def _space(pieces: list[Piece]) -> list[Piece]:
     # Then place each piece by where its ink actually has to sit relative to the
     # ink before it.
     previous_hi: int | None = None
+    pending = 0
     shift = 0
     for index, piece in enumerate(pieces):
         lo, hi = _ink_span(piece.columns)
         # Everything after an adjusted piece moves with it, or the word comes
         # apart further along than the letter we just fixed.
         at[index] += shift
-        if index and previous_hi is not None and lo is not None and piece.letter.strip():
-            previous = pieces[index - 1]
-            # Pieces are in visual order, so this piece is the letter
-            # *earlier* in the word and `previous` is the one after it. A
-            # letter drawn initial or medial reaches forward to join what comes
-            # next; the letter after it accepts that join when it is drawn final
-            # or medial. Both have to be true for the two to meet.
-            reaches_forward = piece.form in ("initial", "medial")
-            accepts_back = previous.form in ("final", "medial")
-            wanted = 1 if (reaches_forward and accepts_back) else 2
+        if index and lo is not None and previous_hi is not None:
+            if pending:
+                # A space or a join breaker came in between, and it has a width
+                # of its own. Spend that instead of closing the gap up.
+                wanted = pending
+            else:
+                previous = pieces[index - 1]
+                # Pieces are in visual order, so this piece is the letter
+                # *earlier* in the word and `previous` is the one after it. A
+                # letter drawn initial or medial reaches forward to join what
+                # comes next; the letter after it accepts that join when it is
+                # drawn final or medial. Both have to be true for the two to
+                # meet.
+                reaches_forward = piece.form in ("initial", "medial")
+                accepts_back = previous.form in ("final", "medial")
+                wanted = 1 if (reaches_forward and accepts_back) else 2
             adjustment = (previous_hi + wanted) - (at[index] + lo)
             shift += adjustment
             at[index] += adjustment
         if hi is not None:
             previous_hi = at[index] + hi
+            pending = 0
         else:
             # No ink at all: a space, or a codepoint the glyph table has nothing
-            # for. Dropping the chain here rather than carrying it forward is
-            # the point. Leaving the previous letter's ink edge in place would
-            # make the next glyph glue itself to a position where nothing is
-            # actually drawn, which is what pulled a word apart around a
-            # missing letter, and what stopped a word from being separated from
-            # the one before it by a space.
-            previous_hi = None
+            # for. The chain is carried *across* the gap rather than dropped,
+            # and the width owed to it is added up as it goes. Dropping it left
+            # the next word at whatever the pen gave it, so the whole left side
+            # bearing of its first letter landed in the gap and a two pixel
+            # space came out ten pixels wide.
+            pending += piece.advance
 
     # A letter may legitimately have to reach back past its own origin to meet
-    # the ink before it, but the pen must never step backwards: a negative
-    # advance draws the next piece on top of this one. Clamping here keeps a
+    # the ink before it, because ink sits inset inside its box: an alef's stroke
+    # is five columns in, and the word after a space is pushed back by however
+    # much of that letter sits to the left of its ink. So origins may go
+    # backwards. What must never happen is ink landing on ink, and that is what
+    # this guards - clamping on the ink edge rather than the origin keeps a
     # design mistake showing up as a visible gap instead of a scrambled line.
-    for index in range(1, len(at)):
-        if at[index] < at[index - 1]:
-            at[index] = at[index - 1]
+    for index in range(1, len(pieces)):
+        lo, _ = _ink_span(pieces[index].columns)
+        _, previous_hi_ink = _ink_span(pieces[index - 1].columns)
+        if lo is None or previous_hi_ink is None:
+            continue
+        if at[index] + lo < at[index - 1] + previous_hi_ink:
+            at[index] = at[index - 1] + previous_hi_ink - lo
+
+    # Ink may not overlap, but a step still may not come out negative, because
+    # the canvas walks the line by adding up advances and a negative one sends
+    # the cursor backwards. So each piece is held at or right of the origin of
+    # the last piece that actually drew something. Holding it against the blank
+    # in between would be the wrong thing to measure: a space has no origin
+    # worth respecting, and insisting on it is what pushed the word after a
+    # space out to ten pixels. Where this costs a pixel of separation it costs
+    # it at a join to ASCII, which is nowhere near as bad as a negative step.
+    last_drawn = 0
+    for index, piece in enumerate(pieces):
+        if _ink_span(piece.columns)[1] is None:
+            continue
+        if at[index] < last_drawn:
+            at[index] = last_drawn
+        last_drawn = at[index]
+
+    # A blank piece draws nothing, so where its own origin lands only affects
+    # the step to the piece after it. Giving it that piece's origin keeps every
+    # step on the line non-negative, which is what the canvas assumes when it
+    # walks the pieces left to right.
+    for index in range(len(pieces) - 2, -1, -1):
+        if _ink_span(pieces[index].columns)[1] is None:
+            at[index] = at[index + 1]
 
     # The canvas draws each piece at the running total of the steps before it and
     # steps on by this piece's own advance, so the step a piece carries is the

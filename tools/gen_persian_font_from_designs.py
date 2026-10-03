@@ -11,7 +11,7 @@ each letter-form points at.
 Each design in the markdown is 12 columns by 11 rows. In the font's terms that
 is width=12, ascender=10 (so the 11 rows sit just above the baseline),
 advance=12 (letters tile edge to edge and the shaper's ink-to-ink spacing puts
-a single blank column between words), lsb=0.
+two blank columns between words), lsb=0.
 
 The joining line is row 6. An *initial* design has to reach left along it to
 meet the letter that follows, a *final* design has to reach right along it to
