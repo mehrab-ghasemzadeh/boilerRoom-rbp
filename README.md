@@ -668,6 +668,56 @@ Telemetry reports both numbers per boiler: `setpoint_c` (the target, updating
 the server's `desired_temperature_c`) and `temperature_c` (what the control
 probe actually reads, updating `reported_temperature_c`).
 
+## Anti-freeze
+
+A room that is allowed to get cold is a room that bursts. `src/anti_freeze.py`
+holds every unit on whenever a water probe drops to freezing, whatever the
+programme says:
+
+| Reading | What happens |
+|---|---|
+| any watched probe **below** the engage temperature (10 °C) | every unit in **automatic** mode is switched on, and held on |
+| every watched probe **above** the release temperature (20 °C) | the hold is released and each unit goes back to what the schedule wants *right now* |
+
+The gap between the two is the deadband: a probe sitting at 10.4 °C must not switch
+the room on and off on alternate read cycles. It is **one latch for the whole
+room**, not one per unit, because what freezes is the pipework — one cold probe
+is enough reason to move water everywhere. The two numbers are **settable from
+the panel** on main-menu option 11, and a pair set there is kept in
+`antifreeze_local.json`; the environment variables above are the defaults a
+card runs on until someone changes them.
+
+**Which probes count: the water probes only** — `boiler_input_water`,
+`boiler_output_water` and `boiler_body`. The two environment probes are
+deliberately not watched. That has a cost worth stating plainly: a room whose
+only probes are the ambient ones has **no anti-freeze at all**, and no amount of
+freezing will show it. The agent says so once, loudly, rather than sitting
+silent like the equivalent hole in the over-temperature protection.
+
+**Manual mode is out of reach, in both directions.** A unit the operator has
+taken over is theirs: anti-freeze will not switch it on when the room freezes
+and will not switch it off when the room warms. That is a real hole in the
+protection, so it is logged as a warning every time the room is freezing and a
+manual unit is in the way — the operator has to be able to see what that choice
+costs.
+
+**Precedence.** Anti-freeze is not a cut-out and the two do not fight:
+
+* an over-temperature **cut wins** — a unit cut for running hot stays off, and
+  anti-freeze does not switch it back on;
+* the **schedule cannot turn a held unit off** — the programme's own tick runs
+  every minute and would otherwise undo the latch seconds after it engaged, so
+  `schedule_runner.evaluate` skips any unit anti-freeze is holding;
+* a **command** to stop heating during a freeze is undone on the next read
+  cycle and logged. Water moving past a freezing probe is what protects the
+  pipe; a temperature limit protects the boiler.
+
+Engage and release are posted to the server as `anti_freeze_engaged` /
+`anti_freeze_released` errors (a warning and an info respectively), every relay
+change is posted as a normal state change, the `device.state` push carries the
+two temperatures and whether the latch is engaged, and the status screen shows a
+`Freeze ON` line with the units being held.
+
 ### Changing the device-wide limits
 
 **Menu option 10 → 3** sets `max_water_temperature_c`,
@@ -733,6 +783,7 @@ no laptop attached gets them.
 | `BOILERROOM_SCHEDULE_LOCAL` | `schedule_local.json` | Programme edited on the device, if any |
 | `BOILERROOM_MODE_CACHE` | `mode_cache.json` | Per-unit automatic/manual modes |
 | `BOILERROOM_SETPOINT_CACHE` | `setpoint_cache.json` | Per-boiler target temperatures |
+| `BOILERROOM_ANTIFREEZE_LOCAL` | `antifreeze_local.json` | Anti-freeze thresholds set on the device, if any |
 | `BOILERROOM_DEVICE_RECORD_CACHE` | `device_record_cache.json` | Cached device self-detail |
 | `BOILERROOM_DATABASE` | `data/readings.db` | Local reading history |
 | `BOILERROOM_DATA_RETENTION_DAYS` | `30` | Days of readings to keep (`0` = keep everything) |
@@ -748,6 +799,13 @@ no laptop attached gets them.
 | `BOILERROOM_AMBIENT_HYSTERESIS` | `2.0` | Deadband for ambient limit recovery (°C) |
 | `BOILERROOM_WATER_DEADBAND` | `5.0` | Recovery deadband when a config sets a max but no min water temperature (°C) |
 | `BOILERROOM_SINGLE_PROBE_BAND` | `3.0` | Half-band for a boiler with a single probe: cut this far above `max_water_temperature_c`, restore this far below (°C) |
+| `BOILERROOM_ANTIFREEZE_ON_C` | `10.0` | Anti-freeze holds every automatic unit on when a water probe drops below this (°C) |
+| `BOILERROOM_ANTIFREEZE_OFF_C` | `20.0` | Anti-freeze releases when every water probe is above this (°C) |
+
+Both are **defaults, not the values in force**: a pair set on the panel (menu
+option 11) is written to `antifreeze_local.json` and wins until option 3 of that
+screen puts the defaults back, which removes the file. See
+[Anti-freeze](#anti-freeze).
 | `BOILERROOM_FIRMWARE_VERSION` | `1.0.0` | Reported in `device.hello` |
 | `BOILERROOM_HARDWARE_VERSION` | `edge-dev` | Reported in `device.hello` |
 
@@ -1206,11 +1264,13 @@ card when the fault is something a restart cannot fix.
 ### Control menu
 
 ```
- 1) Last sensor readings        5) Change schedule
- 2) Relay status / control      6) Show active schedule
- 3) Set unit mode               7) Show app configuration
- 4) Change temperatures         8) Show device mapping
-                              0) Quit
+ 1) Last sensor readings        6) Show active schedule
+ 2) Relay status / control      7) Show app configuration
+ 3) Set unit mode               8) Show device mapping
+ 4) Change temperatures         9) Show status
+ 5) Change schedule            10) Change language
+                              11) Anti-freeze temperatures
+  0) Quit
 ```
 
 Sensor polling and the WebSocket keep running while the menu is open — input is
@@ -1233,6 +1293,15 @@ programme itself — see
 and option 6 shows what the programme is currently doing. Option 7 shows the
 active config, the limits, which boilers are currently cut, and the state of the
 reading database and the telemetry outbox.
+
+**Option 11 changes the two anti-freeze temperatures.** It shows the pair in
+force, whether they came from the environment or from this device, and what the
+latch is doing right now. Two sub-options set the engage and release
+temperatures; the third puts the built-in defaults back. The pair is validated
+as a pair — the release temperature must sit at least 1 °C above the engage
+temperature, or the latch would switch the room on and off every read cycle —
+and a refused edit changes nothing rather than half-applying. A pair set here
+is written to `antifreeze_local.json` and survives a restart.
 
 
 ### The keypad
@@ -1531,6 +1600,7 @@ selects, Enter on its own is `#`.
 | `schedule_runner.py` | Schedule parsing, evaluation, relay switching, local override |
 | `schedule_editor.py` | On-device schedule edits and their on-disk override |
 | `limits_guard.py` | Temperature limit cut-out and recovery |
+| `anti_freeze.py` | Freeze latch: holds automatic units on below 10 °C, releases above 20 °C |
 | `json_store.py` | Atomic JSON read/write for the caches |
 | `logging_setup.py` | Queue-backed console and rotating file logging |
 | `device_config.py` | `config.apply` parsing, on-disk cache, local limit override |

@@ -27,6 +27,7 @@ from device_record import (
     fetch_device_record,
     load_cached_device_record,
 )
+from anti_freeze import anti_freeze
 from errors_client import error_reporter
 from limits_guard import limit_guard
 from logging_setup import configure_logging, shutdown_logging
@@ -204,6 +205,10 @@ async def sensor_loop(state: RuntimeState) -> None:
             # Enforce config limits before telemetry, so a cut is reported in
             # the same cycle it happens.
             await limit_guard.check(state, temperatures)
+
+            # Anti-freeze after the limit guard, so a unit cut for running hot is
+            # already blocked by the time this looks at it — the cut outranks it.
+            await anti_freeze.check(state, temperatures)
 
             # Pacing lives in RuntimeState because a local relay change also
             # posts telemetry; both have to share one "last posted" clock or
@@ -701,6 +706,11 @@ async def main() -> None:
     # Before any task starts, so the first schedule tick already knows which
     # units are hands-off.
     await restore_cached_modes(state)
+    # The anti-freeze thresholds an operator set on this device, before any task
+    # starts: they decide whether the very first read cycle engages the latch,
+    # and a pair that only came back after the first check would be a pair that
+    # had already been ignored once.
+    await anti_freeze.load_local(state)
     await print_startup_banner(state)
 
     auth_task = asyncio.create_task(auth_loop(state), name="auth_loop")

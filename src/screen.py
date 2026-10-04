@@ -497,6 +497,21 @@ FA_FRAGMENTS = (
     ("is already at ", " هم‌اکنون روی "),
     ("is already ", " هم‌اکنون "),
     ("is now ", " اکنون "),
+    # Anti-freeze. Before the bare ON/OFF words below, which would otherwise
+    # take the "ON" out of "Freeze ON" and leave the word Freeze in English.
+    ("Freeze ON ", "ضدیخ روشن "),
+    ("Anti-freeze: on below ", "ضدیخ: روشن زیر "),
+    (", off above ", "، خاموش بالای "),
+    ("  NO protection — ", "  بدون حفاظت — "),
+    # Before the bare "water probe" below, which would otherwise take half of
+    # this phrase and leave the rest of the sentence in English.
+    ("no water probe to watch", "حسگر آبی برای پایش نیست"),
+    ("water probes", "حسگر آب"),
+    ("water probe", "حسگر آب"),
+    ("  ENGAGED by ", "  فعال‌شده توسط "),
+    ("  holding on: ", "  روشن نگه‌داشته: "),
+    ("  not engaged", "  فعال نیست"),
+    ("[set on this device]", "[تنظیم‌شده روی دستگاه]"),
     # Mode and state words, wherever they land in a line. Both are whole words
     # so this cannot touch a name that happens to contain them.
     (" automatic", " خودکار"),

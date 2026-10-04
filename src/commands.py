@@ -17,6 +17,7 @@ import datetime
 from collections import OrderedDict
 from typing import Any, NamedTuple
 
+from anti_freeze import anti_freeze
 from config import RELAYS
 from device_config import config_store
 from schedule_runner import Target, relay_for_target, schedule_runner
@@ -228,6 +229,14 @@ async def build_state_payload(state) -> dict[str, Any]:
         "schedule_local_revision": schedule_runner.local_revision,
         "config_locally_modified": config_store.is_locally_modified,
         "config_local_revision": config_store.local_revision,
+        # The freeze point, because there is no API for it and a dashboard asking
+        # "why is the room heating at 3am" deserves an answer.
+        "anti_freeze": {
+            "on_c": anti_freeze.on_c,
+            "off_c": anti_freeze.off_c,
+            "engaged": anti_freeze.engaged,
+            "locally_modified": anti_freeze.is_local,
+        },
         "read_at": read_at.isoformat() if read_at else None,
     }
 
