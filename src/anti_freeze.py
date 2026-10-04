@@ -69,6 +69,43 @@ class AntiFreezeError(ValueError):
     """Raised when a pair of thresholds cannot be used."""
 
 
+def _grid() -> list[float]:
+    """Every whole degree the panel offers, from the bottom of the range up."""
+    steps = int(round((LIST_MAX_C - LIST_MIN_C) / LIST_STEP_C))
+    return [round(LIST_MIN_C + index * LIST_STEP_C, 1) for index in range(steps + 1)]
+
+
+def choices(field: str, on_c: float, off_c: float) -> list[float]:
+    """
+    The temperatures one threshold may be set to, lowest first.
+
+    The list is **cut by the other threshold**, so a pair that would engage and
+    release on the same reading cannot be built by scrolling: the engage list
+    stops a degree below the release temperature and the release list starts a
+    degree above it. It is the same rule :func:`validate_thresholds` enforces on
+    a typed value — here it is enforced by not offering the value in the first
+    place, which is the difference between a rule and a rule with an exception.
+
+    The value already in force is always in the list, even when the environment
+    gave it a tenth the grid has no row for. It is running; the operator has to
+    be able to see it, and to be able to leave it alone.
+    """
+    current = round(on_c if field == "on_c" else off_c, 1)
+
+    if field == "on_c":
+        top = min(LIST_MAX_C, round(off_c - MIN_DEADBAND_C, 1))
+        values = [value for value in _grid() if value <= top]
+    else:
+        bottom = max(LIST_MIN_C, round(on_c + MIN_DEADBAND_C, 1))
+        values = [value for value in _grid() if value >= bottom]
+
+    if current not in values:
+        values.append(current)
+        values.sort()
+
+    return values
+
+
 async def _clear_file(path: Path) -> None:
     """Remove the saved thresholds, as schedule_editor does its override file."""
     await asyncio.to_thread(path.unlink, missing_ok=True)
@@ -128,6 +165,14 @@ DEFAULT_OFF_C = float(os.environ.get("BOILERROOM_ANTIFREEZE_OFF_C", "20.0"))
 MIN_DEADBAND_C = 1.0
 MIN_THRESHOLD_C = -50.0
 MAX_THRESHOLD_C = 100.0
+
+# The rows the panel offers for each threshold. A degree at a time across the
+# range any water system could plausibly want a freeze point in — not the whole
+# −50…100 the validator accepts, because a list an operator has to scroll
+# through a hundred times to reach the end is a list nobody scrolls.
+LIST_STEP_C = 1.0
+LIST_MIN_C = -20.0
+LIST_MAX_C = 40.0
 
 ANTIFREEZE_PATH = env_path("BOILERROOM_ANTIFREEZE_LOCAL", "antifreeze_local.json")
 

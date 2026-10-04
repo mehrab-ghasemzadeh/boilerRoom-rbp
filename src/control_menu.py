@@ -73,11 +73,10 @@ from keypad_layout import CANCEL, ENTER, NEXT, cap_for
 from logging_setup import get_logger
 import language
 from anti_freeze import (
-    MAX_THRESHOLD_C,
-    MIN_THRESHOLD_C,
     AntiFreezeError,
     anti_freeze,
 )
+from anti_freeze import choices as antifreeze_choices
 from mapping_provider import DEFAULT_MAPPING_PATH
 from limits_guard import limit_guard
 from runtime_state import RuntimeState
@@ -2820,14 +2819,69 @@ async def _show_antifreeze_status(state: RuntimeState) -> None:
 async def _change_antifreeze_threshold(
     state: RuntimeState, field: str, label: str
 ) -> None:
-    """Read one of the two temperatures, and adopt the pair if it is usable."""
-    current = anti_freeze.on_c if field == "on_c" else anti_freeze.off_c
+    """
+    Set one threshold from the values it is allowed to take.
 
+    A list on the panel rather than a number to type: the keypad is arrows and
+    two accept keys, and the whole point of this screen is a value that is
+    compared against another one, so the operator needs to see the neighbouring
+    degrees rather than remember them. 2 and 8 move, 5 and 6 choose.
+    """
+    current = round(
+        anti_freeze.on_c if field == "on_c" else anti_freeze.off_c, 1
+    )
+    values = antifreeze_choices(field, anti_freeze.on_c, anti_freeze.off_c)
+
+    if screen() is None:
+        await _type_antifreeze_threshold(state, field, label, current, values)
+        return
+
+    view = screen()
+    rows = [f"{value:g}{DEGREE}C" for value in values]
+
+    # Opens on the value in force, so the highlight says what this is before a
+    # single key is pressed — the same reason the boiler list does it.
+    index = values.index(current) if current in values else 0
+
+    chosen = await view.select(label, rows, index=index, legend=_SET_LEGEND)
+    if chosen is None:
+        return
+
+    value = values[chosen]
+    if value == current:
+        await view.message(
+            "No change", [f"{label} {_t('is already', 'هم‌اکنون')} {value:g}{DEGREE}C."]
+        )
+        return
+
+    if field == "on_c":
+        pair = (value, anti_freeze.off_c)
+    else:
+        pair = (anti_freeze.on_c, value)
+
+    await _apply_antifreeze(state, *pair, summary=f"{label} {value:g}{DEGREE}C")
+
+
+async def _type_antifreeze_threshold(
+    state: RuntimeState,
+    field: str,
+    label: str,
+    current: float,
+    values: list[float],
+) -> None:
+    """
+    The terminal's version of the list: the range it covers, and a number.
+
+    Same bounds the panel offers — the lowest and highest are printed, and
+    anything outside them is refused — so the two ways of setting this cannot
+    disagree about what is allowed.
+    """
     raw = await _prompt(
         f"\n  {label} is {current:.1f}{DEGREE}C.\n"
+        f"  {_t('Allowed', 'مجاز')}: {values[0]:g}{DEGREE}C "
+        f"{_t('to', 'تا')} {values[-1]:g}{DEGREE}C\n"
         f"  {_t('New value in °C', 'مقدار جدید بر حسب °C')} "
-        f"({MIN_THRESHOLD_C:g} to {MAX_THRESHOLD_C:g}, "
-        f"{_t('empty = cancel', 'خالی = لغو')}): "
+        f"({_t('empty = cancel', 'خالی = لغو')}): "
     )
     if not raw:
         await state.echo(f"[menu] {_t('Cancelled.', 'لغو شد.')}\n")
@@ -2840,6 +2894,20 @@ async def _change_antifreeze_threshold(
         await state.echo(
             f"[menu] {_t('Not a temperature', 'عدد دما نیست')} — "
             f"{_t('enter a number, for example 8', 'یک عدد وارد کنید، مثلا 8')}\n"
+        )
+        return
+
+    if not values[0] <= value <= values[-1]:
+        await state.echo(
+            f"[menu] {value:g}{DEGREE}C {_t('is outside the range', 'خارج از محدوده است')}"
+            f" ({values[0]:g}{DEGREE}C … {values[-1]:g}{DEGREE}C)\n"
+        )
+        return
+
+    if value == current:
+        await state.echo(
+            f"[menu] {_t('Unchanged.', 'بدون تغییر.')} {label} "
+            f"{_t('is already', 'هم‌اکنون')} {value:g}{DEGREE}C\n"
         )
         return
 

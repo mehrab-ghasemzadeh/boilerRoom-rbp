@@ -1297,11 +1297,18 @@ reading database and the telemetry outbox.
 **Option 11 changes the two anti-freeze temperatures.** It shows the pair in
 force, whether they came from the environment or from this device, and what the
 latch is doing right now. Two sub-options set the engage and release
-temperatures; the third puts the built-in defaults back. The pair is validated
-as a pair — the release temperature must sit at least 1 °C above the engage
-temperature, or the latch would switch the room on and off every read cycle —
-and a refused edit changes nothing rather than half-applying. A pair set here
-is written to `antifreeze_local.json` and survives a restart.
+temperatures; the third puts the built-in defaults back.
+
+On the panel each of the two is a **scrolling list of whole degrees**, opened on
+the value in force: **2 and 8** move through it, **5 or 6** choose. The list is
+cut by the other threshold — the engage list stops a degree below the release
+temperature and the release list starts a degree above it — so **20 / 15 cannot
+be built by scrolling**, and neither can any other pair that would engage and
+release on the same reading. On a terminal the same bounds are printed and the
+value is typed; anything outside the range is refused. Either way the pair is
+checked before it is adopted, a refused edit changes nothing rather than
+half-applying, and a pair set here is written to `antifreeze_local.json` and
+survives a restart.
 
 
 ### The keypad
@@ -1600,7 +1607,7 @@ selects, Enter on its own is `#`.
 | `schedule_runner.py` | Schedule parsing, evaluation, relay switching, local override |
 | `schedule_editor.py` | On-device schedule edits and their on-disk override |
 | `limits_guard.py` | Temperature limit cut-out and recovery |
-| `anti_freeze.py` | Freeze latch: holds automatic units on below 10 °C, releases above 20 °C |
+| `anti_freeze.py` | Freeze latch: holds automatic units on below 10 °C, releases above 20 °C; thresholds editable on the panel |
 | `json_store.py` | Atomic JSON read/write for the caches |
 | `logging_setup.py` | Queue-backed console and rotating file logging |
 | `device_config.py` | `config.apply` parsing, on-disk cache, local limit override |
