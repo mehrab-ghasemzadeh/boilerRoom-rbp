@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import sys
 import threading
 import time
@@ -840,14 +841,149 @@ def _test_canvas(label: str) -> Canvas:
 
     canvas = Canvas()
     canvas.rect(0, 0, WIDTH, HEIGHT)
-    canvas.text(6, 6, "ST7920 bring-up")
-    canvas.text(6, 18, label)
-    canvas.hline(4, 30, WIDTH - 8)
+    canvas.text(6, 0, "ST7920 bring-up")
+    canvas.text(6, 13, label)
+    canvas.hline(4, 26, WIDTH - 8)
 
     for x in range(6, WIDTH - 6):
-        canvas.pixel(x, 34 + (x - 6) * 22 // (WIDTH - 12))
+        canvas.pixel(x, 30 + (x - 6) * 14 // (WIDTH - 12))
 
-    canvas.text(6, 54, "border line text")
+    canvas.text(6, 46, "border line text")
+
+    return canvas
+
+
+def _persian_card() -> Canvas:
+    """
+    A repeatable Persian test card.
+
+    This exists because the things that go wrong with Persian on a bitmap panel
+    are all invisible in code review and obvious on glass: a letter that came out
+    isolated where it should have joined, a number that reads backwards, a row
+    that overflowed. Keeping one fixed card means a change that breaks shaping
+    is a change you can see, rather than something to notice in use.
+
+    The lines are chosen to cover the cases that actually differ:
+
+    * every joining form, isolated through medial;
+    * the lam-alef ligature, which is drawn as one glyph or not at all;
+    * Persian-specific letters that exist in the drawing as their own designs
+      (گ ک ی پ چ ژ), which only render right if each one is asking the glyph
+      table for the joining position it is actually in;
+    * digits inside Persian text, which must read in order while the words
+      around them reverse;
+    * a ZWNJ, which must take no space and must stop the join.
+    """
+    canvas = Canvas()
+
+    canvas.fill_rect(0, 0, WIDTH, 13, True)
+    canvas.text_right(WIDTH - 2, 0, "تست فارسی", on=False)
+
+    rows = (
+        "سلام",  # lam-alef ligature
+        "تنظیمات",  # initial / medial / final chain
+        "گچپژ کیف",  # letters with no presentation forms of their own
+        "دمای آب: 68",  # digits inside a right-to-left line
+    )
+    for slot, line in enumerate(rows):
+        canvas.text_right(WIDTH - 2, 13 + slot * 13, line)
+
+    canvas.fill_rect(0, 52, WIDTH, 12, True)
+    canvas.text_right(WIDTH - 2, 52, "خوانش‌ها 123", on=False)
+
+    return canvas
+
+
+# ---------------------------------------------------------------------------
+# Persian binary-design card
+# ---------------------------------------------------------------------------
+#
+# Draws the hand-drawn 12x11 binary designs out of persian_alphabet.md
+# straight onto the panel, one page at a time. This is the only way to see
+# those glyphs side by side rather than woven into words: the panel itself
+# draws them from display_font_fa.py, which is generated from the same designs,
+# so a design changed here and a font not regenerated would otherwise look the
+# same on screen until somebody read the letters closely.
+
+_DESIGN_GLYPH_W = 12
+_DESIGN_GLYPH_H = 11
+_DESIGN_GAP = 1
+_DESIGN_ROW_GAP = 2
+_DESIGN_COLS = (WIDTH + _DESIGN_GAP) // (_DESIGN_GLYPH_W + _DESIGN_GAP)
+_DESIGN_ROWS = (HEIGHT + _DESIGN_ROW_GAP) // (_DESIGN_GLYPH_H + _DESIGN_ROW_GAP)
+_DESIGN_PER_PAGE = _DESIGN_COLS * _DESIGN_ROWS
+
+
+def _load_persian_designs() -> dict[str, list[list[int]]]:
+    """Parse the ``# persian alphabet design binary`` section of the markdown."""
+
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "persian_alphabet.md",
+    )
+
+    with open(path, "r", encoding="utf-8") as fh:
+        text = fh.read()
+
+    designs: dict[str, list[list[int]]] = {}
+    label_pattern = re.compile(
+        r"'([^']+)\s*-\s*(Isolated|Initial|Medial|Final)'\s*:\s*\[",
+    )
+
+    for match in label_pattern.finditer(text):
+        label = f"{match.group(1)} - {match.group(2)}"
+        pos = match.end()
+        depth = 1
+        end = pos
+        while end < len(text) and depth > 0:
+            ch = text[end]
+            if ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+                if depth == 0:
+                    break
+            end += 1
+        body = text[pos:end]
+
+        rows: list[list[int]] = []
+        for row_match in re.finditer(r"\[([01,\s]+)\]", body):
+            row = [int(x) for x in row_match.group(1).split(",") if x.strip()]
+            rows.append(row)
+
+        if rows:
+            designs[label] = rows
+
+    return designs
+
+
+def persian_design_card(page: int = 0) -> Canvas:
+    """
+    One page of the hand-drawn Persian binary designs.
+
+    Layout is glyph-major: the first ``_DESIGN_PER_PAGE`` designs in stable
+    order fill the panel left to right, top to bottom, with a filled title bar
+    saying which page it is. Pass ``page`` to walk through them.
+    """
+
+    designs = _load_persian_designs()
+    items = sorted(designs.items())
+
+    canvas = Canvas()
+    canvas.fill_rect(0, 0, WIDTH, 12, True)
+    canvas.text_right(WIDTH - 2, 0, f"designs p{page + 1}", on=False)
+
+    start = page * _DESIGN_PER_PAGE
+    for index, (_label, rows) in enumerate(items[start:start + _DESIGN_PER_PAGE]):
+        col = index % _DESIGN_COLS
+        row = index // _DESIGN_COLS
+        x = col * (_DESIGN_GLYPH_W + _DESIGN_GAP)
+        y = 12 + row * (_DESIGN_GLYPH_H + _DESIGN_ROW_GAP)
+
+        for ry, row_data in enumerate(rows):
+            for rx, cell in enumerate(row_data):
+                if cell:
+                    canvas.pixel(x + rx, y + ry)
 
     return canvas
 
@@ -877,6 +1013,21 @@ async def _test_mode(argv: list[str]) -> None:
 
     rows = await display.show(_test_canvas(time.strftime("run at %H:%M:%S")))
     print("  drew a test frame (%d row(s) sent)" % rows)
+
+    persian = await display.show(_persian_card())
+    print("  drew the Persian card (%d row(s) sent)" % persian)
+
+    if "--persian-designs" in argv:
+        designs = _load_persian_designs()
+        pages = (len(designs) + _DESIGN_PER_PAGE - 1) // _DESIGN_PER_PAGE
+        print(f"  {len(designs)} designs across {pages} page(s)")
+        for page_index in range(pages):
+            sent = await display.show(persian_design_card(page_index))
+            print(f"  drew designs page {page_index + 1} ({sent} row(s) sent)")
+            input("  Press Enter for the next page, Ctrl-C to stop ...")
+    print()
+    print("  The Persian card should show joined letterforms, a number reading")
+    print("  68 and not 86, and a ZWNJ taking no space in the bottom strip.")
     print()
     print("  Blank now means nothing reached the controller: check PSB is LOW,")
     print("  that CS is on the pin named above, and the 5V logic-high margin.")
@@ -898,7 +1049,8 @@ if __name__ == "__main__":
     if "--test" not in sys.argv:
         print(
             "Usage: python src/display.py --test "
-            "[--mode0] [--slow] [--no-reset] [--keep] [--selftest]"
+            "[--mode0] [--slow] [--no-reset] [--keep] [--selftest] "
+            "[--persian-designs]"
         )
         raise SystemExit(2)
 

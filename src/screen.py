@@ -14,11 +14,19 @@ say ``2`` and ``8``, not "up" and "down":
   ``2``  move up          ``#``  select / accept
   ``8``  move down        ``*``  back
 
-The layout is fixed at 128x64 with a 6x8 cell: a title bar, six body rows, and
-the legend strip. Anything longer than six rows scrolls, and a bar down the
-right-hand edge shows how far through it you are — on a screen this small the
-difference between "the list ends here" and "there are nine more" is otherwise
-invisible.
+The layout is fixed at 128x64. Rows are 13 px rather than 8: Persian needs
+that much to be readable, because a Naskh letter reaches about eight rows above
+the baseline and the ج and ژ hang three rows below it, so the 5x7 cell it
+replaces could only ever have drawn a smudge. The cost is honest and visible —
+three body rows instead of six — and it buys text an operator can read in a
+boiler room rather than text that merely occupies the panel. Anything longer
+than three rows scrolls, and a bar down the right-hand edge shows how far
+through it you are; on a screen this small the difference between "the list ends
+here" and "there are two more" is otherwise invisible.
+
+Rows are measured in pixels rather than characters now. Persian letters are
+variable width, so a string's width depends on which letterforms it shapes into
+and not on how many characters it has.
 
 Nothing here knows what a boiler is. Screens are given lines and items; the
 menu builds them.
@@ -26,7 +34,20 @@ menu builds them.
 
 from __future__ import annotations
 
-from display_canvas import Canvas, WIDTH, truncate, wrap_all
+import datetime
+
+from text_shaper import has_rtl
+
+import language
+from display_canvas import (
+    Canvas,
+    HEIGHT,
+    WIDTH,
+    fits,
+    text_width,
+    truncate,
+    wrap_all,
+)
 from keypad_layout import (
     CANCEL,
     DEL,
@@ -40,14 +61,16 @@ from keypad_layout import (
 
 # -- geometry ---------------------------------------------------------------
 
-TITLE_HEIGHT = 8
-LEGEND_HEIGHT = 8
-ROW_HEIGHT = 8
+# Rows are 13 px because that is what Persian needs. The title and legend get
+# the same 13, and three body rows are what is left: 13 + 39 + 12 = 64.
+TITLE_HEIGHT = 13
+ROW_HEIGHT = 13
+BODY_ROWS = 3
+BODY_HEIGHT = BODY_ROWS * ROW_HEIGHT  # 39
 
 BODY_TOP = TITLE_HEIGHT
-BODY_ROWS = 6
-BODY_HEIGHT = BODY_ROWS * ROW_HEIGHT
-LEGEND_TOP = BODY_TOP + BODY_HEIGHT  # 56
+LEGEND_TOP = BODY_TOP + BODY_HEIGHT  # 52
+LEGEND_HEIGHT = HEIGHT - LEGEND_TOP  # 12
 
 # The right-hand gutter the scroll bar lives in. Selection highlights stop
 # short of it, so the bar stays readable on a highlighted row.
@@ -55,12 +78,15 @@ GUTTER = 4
 BODY_WIDTH = WIDTH - GUTTER
 
 TEXT_X = 2
-# Glyphs are 7 px in an 8 px cell; the spare row goes above, so a highlighted
-# row has a margin at the top and sits flush with the row below it.
-TEXT_OFFSET = 1
+# Both fonts are drawn from the top of the row and land on one shared baseline
+# inside it, so a Persian descender and an ASCII digit sit on the same line.
+TEXT_OFFSET = 0
 
-BODY_COLUMNS = (BODY_WIDTH - TEXT_X) // 6  # 20
-BAR_COLUMNS = (WIDTH - TEXT_X * 2) // 6  # 20
+# Widths available to text, in pixels. These replaced character-column
+# counts: Persian letterforms are variable width, so how much fits depends on
+# which letters a line is made of and not on how many it has.
+BODY_COLUMNS = BODY_WIDTH - TEXT_X  # 122
+BAR_COLUMNS = WIDTH - TEXT_X * 2  # 124
 
 
 # The scroll keys, drawn as their caps with an arrowhead beside each rather
@@ -81,20 +107,519 @@ def scroll_legend(*extra: tuple[str, str]) -> tuple[tuple[str, str], ...]:
     ) + extra
 
 
+# Legend labels the panel draws in Persian. Translated here rather than at every
+# call site because the keycaps themselves are the same in both languages, and a
+# legend is only ever assembled from these few words.
+FA_LABELS = {
+    "OK": "تأیید",
+    "Back": "بازگشت",
+    "Done": "انجام",
+    "More": "بیشتر",
+    "Yes": "بله",
+    "No": "خیر",
+    "On": "روشن",
+    "Off": "خاموش",
+    "Open": "باز کردن",
+    "Status": "وضعیت",
+    "Cancel": "انصراف",
+    "Change": "تغییر",
+    "Del": "حذف",
+    "Delete": "حذف",
+    "Next": "بعدی",
+    "Select": "انتخاب",
+    "Set": "تعیین",
+    "Toggle": "تغییر",
+    "View": "مشاهده",
+}
+
+# Titles the panel draws in Persian, keyed by the English title passed in. The
+# menu passes English titles from one place and the terminal keeps printing
+# English, so only the panel needs the lookup.
+FA_TITLES = {
+    "Menu": "منو",
+    "Boiler room": "اتاق دیگ",
+    "Status": "وضعیت",
+    "Keypad": "صفحه‌کلید",
+    "Schedule": "زمان‌بندی",
+    "Temperatures": "دماها",
+    "Safety limits": "حدود ایمنی",
+    "Relay control": "راه اندازی رله ها",
+    "Unit modes": "حالت‌ها",
+    "Sensor readings": "خوانش ها",
+    # "Sensor readings": "داده های سنسور ها",
+    "App configuration": "پیکربندی برنامه",
+    "Device mapping": "نگاشت دستگاه",
+    "Error": "خطا",
+    "Done": "انجام شد",
+    "No change": "بدون تغییر",
+    "Reported": "ارسال شد",
+    "No targets": "بدون هدف",
+    "No days": "بدون روز",
+    "No rules": "بدون قانون",
+    "No exceptions": "بدون استثنا",
+    "Sign in": "ورود",
+    "Change schedule": "تغییر زمان‌بندی",
+    "Active schedule": "زمان‌بندی فعال",
+    "Confirm delete": "تأیید حذف",
+    "Delete weekly rule": "حذف قانون هفتگی",
+    "Delete exception": "حذف استثنا",
+    "Exception": "استثنا",
+    "Mode for": "حالت برای",
+    "Rule": "قانون",
+    "Stop the agent?": "عامل متوقف شود؟",
+    "Select days": "انتخاب روزها",
+    "Select targets": "انتخاب هدف‌ها",
+    "Switch state": "تغییر وضعیت",
+    "Enter value": "ورود مقدار",
+}
+
+# Lines that are fixed text on the panel rather than data the menu formats.
+FA_LINES = {
+    "Starting up ...": "در حال راه‌ اندازی ...",
+    "Agent stopped.": "عامل متوقف شد.",
+    "Keypad did not start:": "صفحه‌کلید اجرا نشد:",
+    "no keypad fitted": "صفحه‌کلید وصل نیست",
+    "Back to menu": "بازگشت به منو",
+    "No relays configured.": "رله‌ای پیکربندی نشده است.",
+    "No boilers or pumps": "دیگ یا پمپی در نگاشت نیست",
+    "in the device mapping.": "",
+    "At least one target": "دست‌کم یک هدف",
+    "must be selected.": "باید انتخاب شود.",
+    "At least one day": "دست‌کم یک روز",
+    "No weekly rules": "قانون هفتگی برای حذف نیست",
+    "to delete.": "",
+    "No date exceptions": "استثنای تاریخی برای حذف نیست",
+    "No more weekly rules.": "قانون هفتگی دیگری نیست.",
+    "Nothing to choose from.": "موردی برای انتخاب نیست.",
+    "Mode reported to the server.": "حالت به سرور ارسال شد.",
+    # Startup and shutdown.
+    "Shutting down ...": "در حال خاموش کردن ...",
+    "Equipment units:": "واحدهای تجهیزات:",
+    "Relay states:": "وضعیت رله‌ها:",
+    "Relays:": "رله‌ها:",
+    "Temperature sensors:": "حسگرهای دما:",
+    "Unit modes:": "حالت واحدها:",
+    "Targets:": "هدف‌ها:",
+    "No readings yet.": "هنوز خوانشی نیست.",
+    "No boilers in the device mapping.": "دیگی در نگاشت دستگاه نیست.",
+    "No boiler has its own temperature set.": "برای هیچ دیگی دمای مستقل تعیین نشده است.",
+    "Relay controller not available.": "کنترلر رله در دسترس نیست.",
+    # Config and connection details.
+    "API base URL:": "نشانی پایه API:",
+    "WebSocket URL:": "نشانی WebSocket:",
+    "Device username:": "نام کاربری دستگاه:",
+    "Device ID:": "شناسه دستگاه:",
+    "Read interval:": "بازه خواندن:",
+    "Telemetry every:": "گزارش هر:",
+    "Mapping source:": "منبع نگاشت:",
+    "Mapping file:": "فایل نگاشت:",
+    "Authenticated:": "احراز هویت:",
+    "WebSocket:": "WebSocket:",
+    "Database:": "پایگاه داده:",
+    "Database: unavailable (": "پایگاه داده: در دسترس نیست (",
+    "Outbox:   empty (": "صندوق خروجی: خالی (",
+    "Active config:    v": "پیکربندی فعال:    v",
+    "Desired config:   v": "پیکربندی خواسته:   v",
+    "schedule: v": "زمان‌بندی: v",
+    "(not set)": "(تعیین نشده)",
+    "(not logged in)": "(وارد نشده)",
+    "connected": "متصل",
+    "disconnected": "قطع",
+    # Reading and schedule prose.
+    "Last readings at": "آخرین خوانش‌ ها در",
+    "(cycle": "(چرخه",
+    "Scheduling rules:": "قوانین زمان‌بندی:",
+    "Schedule v": "زمان‌بندی v",
+    "Schedule updated —": "زمان‌بندی به‌روزرسانی شد —",
+    "Now running a locally edited v": "اکنون نسخه محلی ویرایش‌شده v اجرا می‌شود",
+    "locally edited (revision": "ویرایش محلی (بازنگری",
+    ", on top of published v": "، بر پایه نسخه منتشرشده v",
+    "Back to the published schedule v": "بازگشت به زمان‌بندی منتشرشده v",
+    "Back to the published config v": "بازگشت به پیکربندی منتشرشده v",
+    ". This is now the room's schedule, not a local edit.": ". اکنون زمان‌بندی اتاق است، نه ویرایش محلی.",
+    "Published — the server created schedule v": "منتشر شد — سرور زمان‌بندی v ساخت",
+    "Publishing to the server ...": "در حال ارسال به سرور ...",
+    "is already": "هم‌اکنون",
+    "is now": "اکنون",
+    "Invalid mode.": "حالت نامعتبر است.",
+    "Invalid relay ID.": "شناسه رله نامعتبر است.",
+    "Invalid selection.": "انتخاب نامعتبر است.",
+    "Cancelled.": "لغو شد.",
+    "Rejected:": "رد شد:",
+    "The server refused it:": "سرور آن را نپذیرفت:",
+    "is not a number from the list.": "شماره‌ای از فهرست نیست.",
+    "There is no target": "هدفی وجود ندارد",
+    "Unknown option:": "گزینه ناشناخته:",
+    # Limits.
+    "Limits (published config v": "حدود (پیکربندی منتشرشده v",
+    "Limits updated —": "حدود به‌روزرسانی شد —",
+    "Now running locally edited limits on v": "اکنون حدود ویرایش محلی روی v اجرا می‌شود",
+    "There are no local limit edits to discard.": "ویرایش محلی حدی برای کنار گذاشتن نیست.",
+    "There are no local edits to discard.": "ویرایش محلی برای کنار گذاشتن نیست.",
+    "is cut off by a temperature limit (": "به‌وسیله حد دما قطع می‌شود (",
+    ") — refusing to switch it on.": ") — روشن کردن آن انجام نمی‌شود.",
+    "). The server's next publish replaces it.": "). انتشار بعدی سرور آن را جایگزین می‌کند.",
+    "). The server's next publish replaces them.": "). انتشار بعدی سرور آن‌ها را جایگزین می‌کند.",
+    "now follows the device-wide limit.": "اکنون از حد سراسری دستگاه پیروی می‌کند.",
+    # Offline and warning prose.
+    "No answer from the server — the change is running here and will be published when the device reconnects.":
+        "پاسخی از سرور نیامد — تغییر اینجا اجرا می‌شود و با اتصال دوباره دستگاه منتشر خواهد شد.",
+    "Offline — the mode will be reported when the device reconnects.":
+        "آفلاین — حالت با اتصال دوباره دستگاه گزارش می‌شود.",
+    "The change is still running here, and will be offered again on the next connection.":
+        "تغییر همچنان اینجا اجرا می‌شود و در اتصال بعدی دوباره ارسال خواهد شد.",
+    "The config changed while you were editing it — most likely the server published one. Nothing was saved; take another look and try again.":
+        "پیکربندی هنگام ویرایش تغییر کرد — به‌احتمال زیاد سرور یکی منتشر کرده است. چیزی ذخیره نشد؛ دوباره نگاه کنید و تلاش کنید.",
+    "The schedule changed while you were editing it — most likely the server published one. Nothing was saved; take another look and try again.":
+        "زمان‌بندی هنگام ویرایش تغییر کرد — به‌احتمال زیاد سرور یکی منتشر کرده است. چیزی ذخیره نشد؛ دوباره نگاه کنید و تلاش کنید.",
+    "No schedule yet — adding a rule starts one on this device.":
+        "هنوز زمان‌بندی نیست — افزودن قانون یکی روی این دستگاه می‌سازد.",
+    "No config yet — setting a limit starts one on this device.":
+        "هنوز پیکربندی نیست — تعیین حد یکی روی این دستگاه می‌سازد.",
+    "Note: the server keeps the last temperature it was given; this only changes what this device holds the boiler at.":
+        "توجه: سرور آخرین دمای دریافتی را نگه می‌دارد؛ این تنها دمای نگه‌داشته‌شده توسط این دستگاه را تغییر می‌دهد.",
+    "WARNING: it could not be written to disk, so it will not survive a restart.":
+        "هشدار: روی دیسک نوشته نشد، بنابراین پس از راه‌ اندازی دوباره باقی نمی‌ماند.",
+    "WARNING: they could not be written to disk, so they will not survive a restart.":
+        "هشدار: روی دیسک نوشته نشدند، بنابراین پس از راه‌ اندازی دوباره باقی نمی‌مانند.",
+    "— enter a number (sensor polling continues in background).":
+        "— یک شماره وارد کنید (نمونه‌برداری حسگر در پس‌زمینه ادامه دارد).",
+    "Reported to the server.": "به سرور ارسال شد.",
+    "Local edits discarded. Nothing has ever been published to this device, so no programme is driving the relays — they stay where they are until the server sends one.":
+        "ویرایش‌های محلی کنار گذاشته شد. هرگز چیزی برای این دستگاه منتشر نشده است، بنابراین هیچ برنامه‌ای رله‌ها را هدایت نمی‌کند — تا زمانی که سرور برنامه‌ای بفرستد در وضعیت کنونی می‌مانند.",
+    "Local limits discarded. Nothing has ever been published to this device, so there are now NO temperature limits and no over-temperature cut until the server sends one.":
+        "حدود محلی کنار گذاشته شد. هرگز چیزی برای این دستگاه منتشر نشده است، بنابراین اکنون هیچ حد دمایی و هیچ قطع بیش‌ازحد دما وجود ندارد تا سرور یکی بفرستد.",
+    "Control menu ready on the": "منوی کنترل آماده روی",
+    "App configuration:": "پیکربندی برنامه:",
+    "Boiler temperatures:": "دماهای دیگ:",
+    "No boilers or pumps in the device mapping.": "دیگ یا پمپی در نگاشت دستگاه نیست.",
+    "Reported": "ارسال شد",
+    # Unit and protocol fragments shown beside a value.
+    "Boiler": "دیگ",
+    "Relay": "رله",
+    "Sensor": "حسگر",
+    "days": "روز",
+    "rows from": "ردیف از",
+    "recovered post(s) on record)": "پیام بازیابی‌شده در سابقه)",
+    "KB, keeping": "کیلوبایت، نگه‌داشتن",
+    ", GPIO": "، GPIO",
+    ": unavailable": ": در دسترس نیست",
+    ") boiler": ") دیگ",
+    "(revision": "(بازنگری",
+    "-> manual; the schedule will leave it alone until you set it back.":
+        "-> دستی؛ زمان‌بندی تا بازگرداندن آن به‌حالت خودکار دست نمی‌زند.",
+    "WS hello_ack:     yes (server_time=": "WS hello_ack:     بله (server_time=",
+    "Boiler Room Monitoring System Started": "سامانه پایش اتاق دیگ آغاز شد",
+    "Temperature sensor mapping:": "نگاشت حسگرهای دما:",
+    "Relay mapping:": "نگاشت رله‌ها:",
+    "No device mapping yet — this device's wiring comes from the server":
+        "هنوز نگاشت دستگاهی نیست — سیم‌کشی این دستگاه از سابقه سرور می‌آید.",
+    "record. Sensors and relays stay idle until it arrives.":
+        "حسگرها و رله‌ها تا رسیدن آن بی‌کار می‌مانند.",
+    # Sign-in wizard. These are short lines on purpose: the panel body is three
+    # rows and the wizard has to stay readable at the operator's pace.
+    "Cannot use that:": "قابل استفاده نیست:",
+    "Checking with the": "در حال بررسی با",
+    "server ...": "سرور ...",
+    "Accepted.": "پذیرفته شد.",
+    "Saved here. You will": "اینجا ذخیره شد. دیگر",
+    "not be asked again.": "پرسیده نخواهد شد.",
+    "Not accepted.": "پذیرفته نشد.",
+    "Check the username": "نام کاربری را",
+    "and password, then": "و رمز را بررسی کنید، سپس",
+    "try again.": "دوباره تلاش کنید.",
+    "No answer from the": "پاسخی از",
+    "server yet.": "سرور نیامده است.",
+    "Kept and retried in": "نگه داشته شد و در",
+    "the background;": "پس‌زمینه دوباره تلاش می‌شود؛",
+    "saved when it works.": "هنگام موفقیت ذخیره می‌شود.",
+    "Left unsigned.": "بدون ورود رها شد.",
+    "The boilers keep to": "دیگ‌ها به",
+    "the cached schedule.": "زمان‌بندی ذخیره‌شده پایبند می‌مانند.",
+    "Restart to be asked.": "برای پرسش دوباره راه‌ اندازی کنید.",
+    "Not signed in yet.": "هنوز وارد نشده‌اید.",
+    "provisioning.": "راه‌ اندازی اولیه.",
+    # Rule and exception detail lines. Each is built as an f-string, so these
+    # are the fixed parts; the values beside them stay as they are.
+    "Rule ": "قانون ",
+    "Exception ": "استثنا ",
+    "Type the username": "نام کاربری را بنویسید",
+    "and password from": "و رمز را از",
+    "the keypad.": "صفحه‌کلید وارد کنید.",
+    "Digits only.": "تنها ارقام.",
+    # Status and configuration pages.
+    "Weekly rules:": "قوانین هفتگی:",
+    "Weekly rules: none": "قوانین هفتگی: هیچ",
+    "Exceptions:": "استثناها:",
+    "Exceptions: none": "استثناها: هیچ",
+    "Limits:": "حدود:",
+    "Limits: no boilers in the device mapping.": "حدود: دیگی در نگاشت دستگاه نیست.",
+    "Now:": "اکنون:",
+    "Now: no schedule": "اکنون: بدون زمان‌بندی",
+    "No weekly rules": "قانون هفتگی نیست",
+    "No date exceptions": "استثنای تاریخی نیست",
+    "No more weekly rules.": "قانون هفتگی دیگری نیست.",
+    "No more exceptions.": "استثنای دیگری نیست.",
+    "No schedule received yet.": "هنوز زمان‌بندی دریافت نشده است.",
+    "No config received yet.": "هنوز پیکربندی دریافت نشده است.",
+    "No device record fetched yet.": "هنوز سابقه دستگاه دریافت نشده است.",
+    "No relays configured.": "رله‌ای پیکربندی نشده است.",
+    "No boilers in the": "دیگی در",
+    "in the device mapping.": "نگاشت دستگاه نیست.",
+    "No boilers or pumps": "دیگ یا پمپی",
+    "device mapping.": "در نگاشت دستگاه نیست.",
+    "In force here; published when": "اینجا برقرار است؛ منتشر می‌شود وقتی",
+    "the device reconnects.": "دستگاه دوباره متصل شود.",
+    "The mode will be reported": "حالت گزارش می‌شود",
+    "when the device reconnects.": "وقتی دستگاه دوباره متصل شود.",
+    "No answer from the server.": "پاسخی از سرور نیامد.",
+    "Agent stopped.": "عامل متوقف شد.",
+    "  Agent stopped.": "  عامل متوقف شد.",
+    "  Starting up ...": "  در حال راه‌ اندازی ...",
+    "Mode reported to the server.": "حالت به سرور ارسال شد.",
+    "Keypad did not start:": "صفحه‌کلید اجرا نشد:",
+    "  Keypad did not start:": "  صفحه‌کلید اجرا نشد:",
+    "Input: keyboard (mock hardware)": "ورودی: صفحه‌کلید (سخت‌افزار نمایشی)",
+    "Input: keyboard, restricted to the device's keypad:":
+        "ورودی: صفحه‌کلید، محدود به صفحه‌کلید دستگاه:",
+}
+
+
+# Option labels in the selectable lists. The values the handlers compare against
+# are unchanged, so only the row text differs. Rows carrying live data (a
+# temperature, a unit name, a target id) are not in here: they are built with
+# the data already in them and pass through untouched.
+FA_ROWS = {
+    # Mode choices.
+    "automatic": "خودکار",
+    "manual": "دستی",
+    "ON": "روشن",
+    "OFF": "خاموش",
+    # Weekday abbreviations, in the order the schedule stores them.
+    "Mon": "دوشنبه",
+    "Tue": "سه‌شنبه",
+    "Wed": "چهارشنبه",
+    "Thu": "پنج‌شنبه",
+    "Fri": "جمعه",
+    "Sat": "شنبه",
+    "Sun": "یکشنبه",
+    # Schedule edit menus.
+    "Add weekly rule": "افزودن قانون هفتگی",
+    "Remove weekly rule": "حذف قانون هفتگی",
+    "Add date exception": "افزودن استثنا",
+    "Remove exception": "حذف استثنا",
+    # Per-item actions and confirmations.
+    "View details": "مشاهده جزئیات",
+    "Delete this rule": "حذف این قانون",
+    "Delete this exception": "حذف این استثنا",
+    "Back to list": "بازگشت به فهرست",
+    "No, keep it": "خیر، نگهش دار",
+    "Yes, delete it": "بله، حذفش کن",
+    "No, keep running": "خیر، ادامه بده",
+    "Yes, stop it": "بله، متوقف کن",
+    # Temperature setpoint list.
+    "Device-wide limit": "حد سراسری دستگاه",
+    # Reading line labels.
+}
+
+
+def _translate_row(text: str) -> str:
+    """The Persian form of a fixed option label, or the text unchanged."""
+    if not language.is_persian():
+        return text
+    return FA_ROWS.get(text, text)
+
+
+# Fixed labels that appear inside a line that also carries live values. A line
+# like "  Time: 08:00-22:00" is built with an f-string, so it is not a key in
+# FA_LINES and cannot be; these are substituted into the text instead. Order
+# matters only in that a longer label must come before a shorter one that starts
+# the same way.
+FA_FRAGMENTS = (
+    ("  Time: ", "  ساعت: "),
+    ("  Days: ", "  روزها: "),
+    ("  Action: ", "  کنش: "),
+    ("  Targets: ", "  هدف‌ها: "),
+    ("  Date: ", "  تاریخ: "),
+    ("  Window: ", "  بازه: "),
+    ("  Reason: ", "  دلیل: "),
+    ("Rule ", "قانون "),
+    ("Exception ", "استثنا "),
+    # The config and connection block. These are label/value rows, so the label
+    # is fixed and only the value varies.
+    ("  API base URL:     ", "  نشانی پایه API:     "),
+    ("  WebSocket URL:    ", "  نشانی WebSocket:    "),
+    ("  Device username:  ", "  نام کاربری دستگاه:  "),
+    ("  Device ID:        ", "  شناسه دستگاه:        "),
+    ("  Read interval:    ", "  بازه خواندن:    "),
+    ("  Telemetry every:  ", "  گزارش هر:  "),
+    ("  Mapping source:   ", "  منبع نگاشت:   "),
+    ("  Mapping file:     ", "  فایل نگاشت:     "),
+    ("  Authenticated:    ", "  احراز هویت:    "),
+    ("  WebSocket:        ", "  WebSocket:        "),
+    ("  WS hello_ack:     ", "  WS hello_ack:     "),
+    ("  Active config:    ", "  پیکربندی فعال:    "),
+    ("  Desired config:   ", "  پیکربندی خواسته:   "),
+    (" schedule: v", " زمان‌بندی: v"),
+    ("  Database: ", "  پایگاه داده: "),
+    (" rows from ", " ردیف از "),
+    (" sensor(s), ", " حسگر، "),
+    (" KB, keeping ", " کیلوبایت، نگه‌داشتن "),
+    (" days", " روز"),
+    # Mapping and reading lines.
+    ("  Sensor ", "  حسگر "),
+    ("  Relay ", "  رله "),
+    ("(role=", "(نقش="),
+    (", unit=", "، واحد="),
+    (", GPIO ", "، GPIO "),
+    ("°C", " °C"),
+    ("  Last readings at ", "  آخرین خوانش‌ ها در "),
+    (" (cycle ", " (چرخه "),
+    (": unavailable", ": در دسترس نیست"),
+    (":   °C", ":   °C"),
+    # Schedule and limits summary lines.
+    ("Schedule v", "زمان‌بندی v"),
+    ("Schedule updated — ", "زمان‌بندی به‌روزرسانی شد — "),
+    ("Limits updated — ", "حدود به‌روزرسانی شد — "),
+    ("Now running a locally edited v", "اکنون نسخه محلی ویرایش‌شده v اجرا می‌شود"),
+    ("Now running locally edited limits on v", "اکنون حدود ویرایش محلی روی v اجرا می‌شود"),
+    ("(revision ", "(بازنگری "),
+    (", on top of published v", "، بر پایه نسخه منتشرشده v"),
+    ("The server's next publish replaces it", "انتشار بعدی سرور آن را جایگزین می‌کند"),
+    ("The server's next publish replaces them", "انتشار بعدی سرور آن‌ها را جایگزین می‌کند"),
+    (" now follows the device-wide limit", " اکنون از حد سراسری دستگاه پیروی می‌کند"),
+    ("— refusing to switch it on.", "— روشن کردن آن انجام نمی‌شود."),
+    ("Back to the published schedule v", "بازگشت به زمان‌بندی منتشرشده v"),
+    ("Back to the published config v", "بازگشت به پیکربندی منتشرشده v"),
+    (") boiler", ") دیگ"),
+    (" relay ", " رله "),
+    ("enter a number", "یک شماره وارد کنید"),
+    ("is already at ", " هم‌اکنون روی "),
+    ("is already ", " هم‌اکنون "),
+    ("is now ", " اکنون "),
+    # Mode and state words, wherever they land in a line. Both are whole words
+    # so this cannot touch a name that happens to contain them.
+    (" automatic", " خودکار"),
+    (" manual", " دستی"),
+    (" ON", " روشن"),
+    ("Panel language:", " زبان پنل: "),
+    (" OFF", " خاموش"),
+    ("ON", "روشن"),
+    ("OFF", "خاموش"),
+    ("is cut off by a temperature limit (", " به‌وسیله حد دما قطع می‌شود ("),
+    # Weekday abbreviations, as the schedule stores them.
+)
+
+
+# The link indicator in the title bar, as (column, row) text: the wifi mark —
+# three arcs opening downward over the emitter. Disconnected it is struck
+# through. The slash rather than a dimmer or partial version of the same shape,
+# because at seven pixels across "less ink" and "no ink" are the same picture,
+# and a heating panel that has lost the server has to say so in a way nobody has
+# to squint at.
+LINK_UP = (
+    "..###..",
+    ".#...#.",
+    "#.....#",
+    "..###..",
+    ".#...#.",
+    "..###..",
+    "...#...",
+)
+LINK_DOWN = (
+    "..###..",
+    ".#...#.",
+    "#.....#",
+    "..#.#..",
+    ".#...#.",
+    "...##..",
+    "...#...",
+)
+LINK_WIDTH = 7
+LINK_HEIGHT = 7
+
+
+def _draw_link(canvas, x: int, y: int, connected: bool) -> None:
+    """
+    Draw the connection icon with its top-left at ``(x, y)``.
+
+    The bar is filled and everything else is drawn inverted into it, so ``on``
+    is False throughout.
+    """
+    art = LINK_UP if connected else LINK_DOWN
+    for row, line in enumerate(art):
+        for col, bit in enumerate(line):
+            if bit == "#":
+                canvas.pixel(x + col, y + row, on=False)
+
+
+def _clock_text() -> str:
+    """
+    The time for the title bar, as HH:MM.
+
+    Local wall-clock time, not UTC. Everything the device *stores* is UTC and
+    stays that way, but the bar is for the person standing in front of it: a
+    header reading 16:38 in the evening reads as a device that has stopped
+    rather than one that is correct. Twenty-four hours rather than twelve,
+    because a clock on a heating panel is read in the evening as often as the
+    morning and an AM/PM flag is three pixels nobody can read at this size.
+
+    This depends on the Pi's own timezone being set, since that is what "local"
+    means here. Schedule times come from the server in the *schedule's*
+    timezone, so on a box left on UTC this bar will not match them; that is
+    worth fixing on the device rather than working around in the panel.
+    """
+    return datetime.datetime.now().strftime("%H:%M")
+
+
+def _translate_line(text: str) -> str:
+    """
+    The Persian form of a body line, or the line unchanged.
+
+    A whole fixed line is a key in FA_LINES. A line that mixes Persian-translated
+    words with live values — a rule's time, a unit's name, a count — matches no
+    key, so its fixed labels are substituted in place. Substituting only the
+    labels is what keeps the values intact: a number, a device name and a relay
+    id come through untouched because nothing here matches them.
+    """
+    if not language.is_persian():
+        return text
+    stripped = text.strip()
+    whole = FA_LINES.get(stripped)
+    if whole is not None:
+        return whole
+    for label, persian in FA_FRAGMENTS:
+        if label in text:
+            text = text.replace(label, persian)
+    return text
+
+
+def _label(label: str) -> str:
+    if not language.is_persian():
+        return label
+    return FA_LABELS.get(label, label)
+
+
 def _entry_width(entry: tuple[str, str]) -> int:
     if entry == SCROLL_KEYS:
         return _SCROLL_WIDTH
     cap, label = entry
-    return len(f"{cap} {label}" if label else cap) * 6
+    return text_width(f"{cap} {_label(label)}" if label else cap)
 
 
 class Screen:
     """Draws screens on a display and reads the keypad that answers them."""
 
-    def __init__(self, display, device, *, echo=None):
+    def __init__(self, display, device, *, echo=None, link=None):
         self.display = display
         self.device = device
         self.canvas = Canvas()
+
+        # Whether the link to the server is up, asked fresh at every frame so a
+        # reconnect shows up without waiting for the next redraw. None means the
+        # caller does not know, which is drawn as disconnected rather than as a
+        # reassuring blank.
+        self.link = link
 
         # The mock display prints its frames; routing them through the menu's
         # own output keeps them from interleaving with it.
@@ -113,23 +638,72 @@ class Screen:
 
     # -- chrome --------------------------------------------------------------
 
+    def _row(self, y: int, text: str, *, right_edge: int | None = None, on: bool = True) -> None:
+        """
+        Draw one line of body text, aligned to the language it is written in.
+
+        Persian is set from the right edge and Latin from the left, because a
+        reader expects the start of the line where they start reading. On a panel
+        this narrow that matters: a left-aligned Persian label puts its first
+        word at the far end from the eye and leaves the ragged edge on the side
+        the reading begins.
+
+        ``right_edge`` defaults to the body's right edge, which is where the
+        scroll bar would otherwise sit, so a long line runs into the gutter
+        rather than under the bar.
+        """
+        edge = WIDTH - GUTTER if right_edge is None else right_edge
+        line = truncate(text, edge - TEXT_X)
+        if has_rtl(line):
+            self.canvas.text_right(edge, y, line, on=on)
+        else:
+            self.canvas.text(TEXT_X, y, line, on=on)
+
     def frame(
         self,
         title: str,
         *,
-        right: str = "",
         legend: tuple[tuple[str, str], ...] = (),
     ) -> None:
-        """Clear the canvas and draw the title bar and legend strip."""
+        """
+        Clear the canvas and draw the title bar and legend strip.
+
+        The bar carries the page title, the connection icon and the time, which
+        is what an operator standing in front of it needs to know: where they
+        are, whether the device can still reach the server, and how late it is.
+        They are placed from opposite ends of the bar and the title is cut to
+        whatever room is left, so no two can ever overlap however long the title
+        turns out to be.
+        """
         canvas = self.canvas
         canvas.clear()
+        title = FA_TITLES.get(title, title) if language.is_persian() else title
 
         canvas.fill_rect(0, 0, WIDTH, TITLE_HEIGHT, True)
-        room = BAR_COLUMNS
-        if right:
-            room = max(1, BAR_COLUMNS - len(right) - 1)
-            canvas.text_right(WIDTH - TEXT_X, TEXT_OFFSET, right, on=False)
-        canvas.text(TEXT_X, TEXT_OFFSET, truncate(title.upper(), room), on=False)
+
+        clock = _clock_text()
+        connected = bool(self.link and self.link())
+        # Width taken off the title's end before anything is drawn: the clock,
+        # the connection icon, and a gap either side of each so neither touches
+        # the title's last letter.
+        used = text_width(clock) + LINK_WIDTH + 2
+        room = max(0, BAR_COLUMNS - used - 4)
+        shown = truncate(title.upper(), room)
+
+        rtl = has_rtl(shown)
+        # The title sits on the side the reader starts from and the clock on the
+        # side they finish, which for Persian is the right and the left. The
+        # icon hugs the clock: it describes the link, not the page.
+        if rtl:
+            canvas.text_right(WIDTH - TEXT_X, 0, shown, on=False)
+            icon_x = TEXT_X + text_width(clock) + 2
+            canvas.text(TEXT_X, 0, clock, on=False)
+            _draw_link(canvas, icon_x, (TITLE_HEIGHT - LINK_HEIGHT) // 2, connected)
+        else:
+            canvas.text(TEXT_X, 0, shown, on=False)
+            canvas.text_right(WIDTH - TEXT_X, 0, clock, on=False)
+            icon_right = WIDTH - TEXT_X - text_width(clock) - 2
+            _draw_link(canvas, icon_right - LINK_WIDTH, (TITLE_HEIGHT - LINK_HEIGHT) // 2, connected)
 
         self._legend(legend)
 
@@ -150,8 +724,8 @@ class Screen:
 
         # Widest spacing that still fits, then the caps on their own. A strip
         # that has been cut in half says less than nothing.
-        for gap in (3, 2, 1):
-            if content + gap * 6 * (len(entries) - 1) <= room:
+        for gap in (18, 12, 6):
+            if content + gap * (len(entries) - 1) <= room:
                 break
         else:
             gap = 1
@@ -160,23 +734,23 @@ class Screen:
             )
             content = sum(_entry_width(entry) for entry in entries)
 
-        total = content + gap * 6 * (len(entries) - 1)
+        total = content + gap * (len(entries) - 1)
         x = max(TEXT_X, (WIDTH - total) // 2)
         y = LEGEND_TOP + TEXT_OFFSET
 
         for index, entry in enumerate(entries):
             if index:
-                x += gap * 6
+                x += gap
             if entry == SCROLL_KEYS:
                 x = canvas.text(x, y, cap_for(SCROLL_UP), on=False)
-                canvas.triangle_up(x, y + 2, on=False)
+                canvas.triangle_up(x, y + 3, on=False)
                 x += 6 + 4
                 x = canvas.text(x, y, cap_for(SCROLL_DOWN), on=False)
-                canvas.triangle_down(x, y + 2, on=False)
+                canvas.triangle_down(x, y + 3, on=False)
                 x += 6
                 continue
             cap, label = entry
-            x = canvas.text(x, y, f"{cap} {label}" if label else cap, on=False)
+            x = canvas.text(x, y, f"{cap} {_label(label)}" if label else cap, on=False)
 
     def _scrollbar(self, top: int, visible: int, total: int) -> None:
         """A thumb on the right edge showing which slice of a list is shown."""
@@ -235,7 +809,7 @@ class Screen:
                 top = index - BODY_ROWS + 1
             top = max(0, min(top, max(0, total - BODY_ROWS)))
 
-            self.frame(title, right=f"{index + 1}/{total}", legend=strip)
+            self.frame(title, legend=strip)
 
             for slot in range(BODY_ROWS):
                 position = top + slot
@@ -245,10 +819,9 @@ class Screen:
                 selected = position == index
                 if selected:
                     self.canvas.fill_rect(0, y, BODY_WIDTH, ROW_HEIGHT, True)
-                self.canvas.text(
-                    TEXT_X,
+                self._row(
                     y + TEXT_OFFSET,
-                    truncate(items[position], BODY_COLUMNS),
+                    _translate_row(items[position]),
                     on=not selected,
                 )
 
@@ -273,7 +846,10 @@ class Screen:
         the bottom, so holding one key reads the whole thing; ``*`` leaves at
         any point.
         """
-        wrapped = wrap_all(lines, BODY_COLUMNS)
+        # Translate the fixed lines here, before wrapping, so a Persian line is
+        # measured at the width it will actually be drawn at. Lines built from
+        # live data pass through untouched.
+        wrapped = wrap_all([_translate_line(line) for line in lines], BODY_COLUMNS)
         if not wrapped:
             return
 
@@ -286,14 +862,13 @@ class Screen:
             if total > BODY_ROWS:
                 strip = (
                     SCROLL_KEYS,
-                    (cap_for(ENTER), "Done" if at_end else "More"),
+                    (cap_for(ENTER), _label("Done" if at_end else "More")),
                     (cap_for(CANCEL), "Back"),
                 )
             else:
-                strip = ((cap_for(ENTER), "Done"), (cap_for(CANCEL), "Back"))
+                strip = ((cap_for(ENTER), _label("Done")), (cap_for(CANCEL), _label("Back")))
 
-            right = f"{min(top + BODY_ROWS, total)}/{total}" if total > BODY_ROWS else ""
-            self.frame(title, right=right, legend=strip)
+            self.frame(title, legend=strip)
 
             for slot in range(BODY_ROWS):
                 position = top + slot
@@ -359,15 +934,18 @@ class Screen:
             self.frame(title, legend=strip)
 
             for slot, line in enumerate(question):
-                self.canvas.text(TEXT_X, self._body_row(slot) + TEXT_OFFSET, line)
+                self._row(self._body_row(slot) + TEXT_OFFSET, line)
 
             entry_y = self._body_row(BODY_ROWS - 1)
             self.canvas.hline(0, entry_y - 1, WIDTH)
 
             text = "*" * len(editor.text) if mask else editor.text
             # Show the tail once an answer outgrows the row: what was just
-            # typed is what needs checking.
-            visible = text[-(BODY_COLUMNS - 2) :]
+            # typed is what needs checking. Sliced by width, not by count,
+            # because a Persian prompt would otherwise lose the wrong end.
+            visible = text
+            while text_width(visible) > BODY_COLUMNS - 8 and visible:
+                visible = visible[1:]
             end = self.canvas.text(TEXT_X + 2, entry_y + TEXT_OFFSET, visible)
             self.canvas.fill_rect(end, entry_y + 1, 4, ROW_HEIGHT - 2, True)
 
@@ -378,13 +956,19 @@ class Screen:
                 return editor.text
 
     async def splash(self, title: str, lines: list[str], *, legend=()) -> None:
-        """Draw a screen and leave it there. Nothing is read."""
+        """
+        Draw a screen and leave it there. Nothing is read.
+
+        Titles and fixed lines are translated on the way in. Lines the menu
+        formats from live data - a temperature, a status line - are left alone:
+        those need translating where they are built, not here, because only the
+        code that knows what a number means can say it in Persian.
+        """
         self.frame(title, legend=legend)
         for slot, line in enumerate(lines[:BODY_ROWS]):
-            self.canvas.text(
-                TEXT_X,
+            self._row(
                 self._body_row(slot) + TEXT_OFFSET,
-                truncate(line, BODY_COLUMNS),
+                _translate_line(line),
             )
         await self.render()
 
@@ -423,7 +1007,7 @@ class Screen:
                 top = index - BODY_ROWS + 1
             top = max(0, min(top, max(0, total - BODY_ROWS)))
 
-            self.frame(title, right=f"{index + 1}/{total}", legend=strip)
+            self.frame(title, legend=strip)
 
             for slot in range(BODY_ROWS):
                 position = top + slot
@@ -431,14 +1015,22 @@ class Screen:
                     break
                 y = self._body_row(slot)
                 is_highlighted = position == index
+                # The tick goes on the side the reader starts from, which for
+                # Persian is the right. Putting it on the left of a Persian
+                # label puts the mark a whole word away from what it marks.
                 checkbox = "[x]" if selected[position] else "[ ]"
-                text = f"{checkbox} {items[position]}"
+                item = _translate_row(items[position])
+                text = (
+                    f"{item} {checkbox}"
+                    if has_rtl(item)
+                    else f"{checkbox} {item}"
+                )
 
                 if is_highlighted:
                     self.canvas.fill_rect(0, y, BODY_WIDTH, ROW_HEIGHT, True)
-                    self.canvas.text(TEXT_X, y + TEXT_OFFSET, truncate(text, BODY_COLUMNS), on=False)
+                    self._row(y + TEXT_OFFSET, text, on=False)
                 else:
-                    self.canvas.text(TEXT_X, y + TEXT_OFFSET, truncate(text, BODY_COLUMNS), on=True)
+                    self._row(y + TEXT_OFFSET, text, on=True)
 
             self._scrollbar(top, BODY_ROWS, total)
             await self.render()
@@ -487,7 +1079,7 @@ class Screen:
                 top = index - BODY_ROWS + 1
             top = max(0, min(top, max(0, total - BODY_ROWS)))
 
-            self.frame(title, right=f"{index + 1}/{total}", legend=strip)
+            self.frame(title, legend=strip)
 
             for slot in range(BODY_ROWS):
                 position = top + slot
@@ -495,13 +1087,13 @@ class Screen:
                     break
                 y = self._body_row(slot)
                 is_highlighted = position == index
-                text = items[position]
+                text = _translate_row(items[position])
 
                 if is_highlighted:
                     self.canvas.fill_rect(0, y, BODY_WIDTH, ROW_HEIGHT, True)
-                    self.canvas.text(TEXT_X, y + TEXT_OFFSET, truncate(text, BODY_COLUMNS), on=False)
+                    self._row(y + TEXT_OFFSET, text, on=False)
                 else:
-                    self.canvas.text(TEXT_X, y + TEXT_OFFSET, truncate(text, BODY_COLUMNS), on=True)
+                    self._row(y + TEXT_OFFSET, text, on=True)
 
             self._scrollbar(top, BODY_ROWS, total)
             await self.render()

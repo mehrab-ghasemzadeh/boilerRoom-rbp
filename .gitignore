@@ -1,6 +1,7 @@
 *_cache.json
 .venv/
 data/
-src/__pycache__/
+*/__pycache__/
 # *.md
 # .env.mock
+test.py

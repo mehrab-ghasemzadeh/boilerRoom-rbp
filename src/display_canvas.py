@@ -17,6 +17,14 @@ three thousand pixels a frame, and the menu redraws on every keypress.
 from __future__ import annotations
 
 from display_font import CELL_HEIGHT, CELL_WIDTH, GLYPH_HEIGHT, GLYPH_WIDTH, glyph
+from display_font_fa import BASELINE as _FA_BASELINE
+from display_font_fa import ROW_HEIGHT as _FA_ROW_HEIGHT
+from text_shaper import has_rtl, shape
+
+# The most rows below the baseline a glyph can reach. Persian descenders --
+# the tail of the ج, the چ, the ژ -- hang three rows under it; anything deeper
+# would be a glyph that got drawn outside the box the generator cropped to.
+_FA_DESCENDER = _FA_ROW_HEIGHT - _FA_BASELINE
 
 WIDTH = 128
 HEIGHT = 64
@@ -135,6 +143,13 @@ class Canvas:
         ``on=False`` clears pixels instead of setting them, which is how text
         goes into a filled bar — the title and the legend are drawn that way.
         """
+        if has_rtl(text):
+            return self._text_rtl(x, y, text, on)
+
+        # Dropped to the same baseline the Persian path uses, so a line that
+        # mixes the two scripts - a Persian label with a temperature in it -
+        # does not put the numbers on a different line from the words.
+        top = y + _FA_BASELINE - GLYPH_HEIGHT
         cursor = x
         for character in text:
             if cursor >= WIDTH:
@@ -149,8 +164,41 @@ class Canvas:
                     continue
                 for row_index in range(GLYPH_HEIGHT):
                     if column & (1 << row_index):
-                        self.pixel(pixel_x, y + row_index, on)
+                        self.pixel(pixel_x, top + row_index, on)
             cursor += CELL_WIDTH
+        return cursor
+
+    def _text_rtl(self, x: int, y: int, text: str, on: bool = True) -> int:
+        """
+        Draw Persian, or any string mixing Persian with numbers.
+
+        ``y`` is still the top of the row, but the glyphs are hung off a shared
+        baseline near its bottom instead of from its top: Arabic script sits on
+        a baseline the way Latin does, and letters differ in height by more than
+        a monospaced cell can absorb. Without that, a descender on the ج would
+        land in the row below and an alef would float.
+
+        The pieces arrive already shaped and already in drawing order, so this
+        is a byte loop and nothing else.
+        """
+        baseline = y + _FA_BASELINE
+        cursor = x
+
+        for piece in shape(text):
+            if cursor >= WIDTH:
+                break
+            top = baseline - piece.ascender
+            for column_index, column in enumerate(piece.columns):
+                if not column:
+                    continue
+                pixel_x = cursor + column_index
+                if not 0 <= pixel_x < WIDTH:
+                    continue
+                for row_index in range(piece.ascender + _FA_DESCENDER):
+                    if column & (1 << row_index):
+                        self.pixel(pixel_x, top + row_index, on)
+            cursor += piece.advance
+
         return cursor
 
     def text_centered(self, y: int, text: str, on: bool = True) -> None:
@@ -176,6 +224,8 @@ class Canvas:
 
 def text_width(text: str) -> int:
     """Pixels one string occupies, including the gap after the last glyph."""
+    if has_rtl(text):
+        return sum(piece.advance for piece in shape(text))
     return len(text) * CELL_WIDTH
 
 
@@ -183,24 +233,38 @@ def fits(text: str, pixels: int) -> bool:
     return text_width(text) <= pixels
 
 
-def truncate(text: str, columns: int) -> str:
+def truncate(text: str, pixels: int) -> str:
     """
-    Shorten to ``columns`` characters, marking that something was cut.
+    Shorten to ``pixels`` wide, marking that something was cut.
 
-    An ellipsis rather than a hard cut: on a 21-column panel plenty of lines
-    are one or two characters too long, and the difference between "Max water
-    temperatur" and "Max water temperat~" is knowing there is more.
+    An ellipsis rather than a hard cut: on a panel this size plenty of lines
+    are a little too long, and the difference between "Max water temperature"
+    and "Max water temperatu~" is knowing there is more.
+
+    The budget is measured in pixels rather than characters because Persian
+    letters are variable width — a line of them can be a third wider than the
+    same number of Latin characters, and cutting by count would overflow the
+    row. Characters are added until the width is spent.
     """
-    if columns <= 0:
+    if pixels <= 0:
         return ""
-    if len(text) <= columns:
+    if text_width(text) <= pixels:
         return text
-    if columns == 1:
-        return "~"
-    return text[: columns - 1] + "~"
+
+    marker = "~"
+    if pixels < text_width(marker):
+        return marker
+
+    kept = text
+    for length in range(len(text) - 1, 0, -1):
+        kept = text[:length]
+        if text_width(kept) + text_width(marker) <= pixels:
+            return kept + marker
+
+    return marker
 
 
-def wrap(text: str, columns: int) -> list[str]:
+def wrap(text: str, pixels: int) -> list[str]:
     """
     Break one line to fit the panel, on spaces where it can.
 
@@ -209,50 +273,77 @@ def wrap(text: str, columns: int) -> list[str]:
     been folded. An empty line survives as an empty line: the menu uses blank
     lines as separators and losing them runs everything together.
     """
-    if columns <= 0:
+    if pixels <= 0:
         return [""]
 
     text = text.rstrip()
     if not text:
         return [""]
-    if len(text) <= columns:
+    if text_width(text) <= pixels:
         return [text]
 
-    indent = len(text) - len(text.lstrip())
-    continuation = " " * min(indent + 2, max(0, columns - 4))
+    # The continuation indent is measured in pixels, because that is the unit
+    # everything above is measured in, and it is built as a number of spaces
+    # that comes to roughly that width. Deriving the space *count* from a pixel
+    # width and then spending it as pixels leaves a prefix wider than the row it
+    # is supposed to fit, which is how a wrap ends up unable to place even one
+    # character and never terminates.
+    indent = text_width(text) - text_width(text.lstrip())
+    continuation = " " * min(max(1, (indent + 4) // CELL_WIDTH), max(0, pixels // CELL_WIDTH - 1))
 
     lines: list[str] = []
     remaining = text
     prefix = ""
 
     while remaining:
-        room = columns - len(prefix)
-        if room <= 0:  # pathological indentation; give up on it
+        room = pixels - text_width(prefix)
+        if room < CELL_WIDTH:
+            # The indent has eaten the row. Nothing can be placed after it, so
+            # drop it rather than spin: this is what keeps the loop finite even
+            # for a line that cannot fit at all.
             prefix = ""
-            room = columns
+            room = pixels
 
-        if len(remaining) <= room:
+        if text_width(remaining) <= room:
             lines.append(prefix + remaining)
             break
 
-        cut = remaining.rfind(" ", 0, room + 1)
-        if cut <= 0:
-            cut = room  # one long unbroken token: split it rather than overflow
+        # The largest prefix of what is left that still fits, so the fold lands
+        # on the last space before the edge rather than at a fixed count.
+        cut = len(remaining)
+        while cut > 0 and text_width(prefix + remaining[:cut]) > room:
+            cut -= 1
 
-        lines.append(prefix + remaining[:cut].rstrip())
-        remaining = remaining[cut:].lstrip()
+        # Prefer breaking at a space inside that prefix. Only when there is no
+        # space at all — one word longer than the panel — fall back to the
+        # hard split above, which is what keeps an unbreakable token from
+        # overflowing the row.
+        space = remaining.rfind(" ", 1, cut + 1)
+        if space > 0:
+            lines.append(prefix + remaining[:space].rstrip())
+            remaining = remaining[space:].lstrip()
+        else:
+            # Guarantee progress. If not one character fits on its own, place
+            # one anyway and let the caller truncate it: a line that cannot fit
+            # should overflow visibly, not hang.
+            if cut <= 0:
+                lines.append(prefix + remaining[0])
+                remaining = remaining[1:].lstrip()
+            else:
+                lines.append(prefix + remaining[:cut].rstrip())
+                remaining = remaining[cut:].lstrip()
         prefix = continuation
 
     return lines or [""]
 
 
-def wrap_all(lines: list[str], columns: int) -> list[str]:
+def wrap_all(lines: list[str], pixels: int) -> list[str]:
     """Wrap a block of lines, collapsing runs of blanks to a single one."""
     wrapped: list[str] = []
     for line in lines:
-        for part in wrap(line.replace("\t", "    "), columns):
+        for part in wrap(line.replace("\t", "    "), pixels):
             if not part and (not wrapped or not wrapped[-1]):
-                continue  # no double blank lines; the panel has six rows
+                continue  # no double blank lines; the body has three rows
             wrapped.append(part)
     while wrapped and not wrapped[-1]:
         wrapped.pop()
