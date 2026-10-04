@@ -867,9 +867,9 @@ def _persian_card() -> Canvas:
 
     * every joining form, isolated through medial;
     * the lam-alef ligature, which is drawn as one glyph or not at all;
-    * Persian-specific letters with no presentation forms of their own
-      (گ ک ی پ چ ژ), which only render right if the font's own GSUB is being
-      driven correctly;
+    * Persian-specific letters that exist in the drawing as their own designs
+      (گ ک ی پ چ ژ), which only render right if each one is asking the glyph
+      table for the joining position it is actually in;
     * digits inside Persian text, which must read in order while the words
       around them reverse;
     * a ZWNJ, which must take no space and must stop the join.
@@ -900,9 +900,10 @@ def _persian_card() -> Canvas:
 #
 # Draws the hand-drawn 12x11 binary designs out of persian_alphabet.md
 # straight onto the panel, one page at a time. This is the only way to see
-# those specific glyphs -- the Naskh font in display_font_fa.py renders the
-# same letters differently, because it is a real typeface and these are a
-# pixel sketch. Seeing them side by side is what the drawing was for.
+# those glyphs side by side rather than woven into words: the panel itself
+# draws them from display_font_fa.py, which is generated from the same designs,
+# so a design changed here and a font not regenerated would otherwise look the
+# same on screen until somebody read the letters closely.
 
 _DESIGN_GLYPH_W = 12
 _DESIGN_GLYPH_H = 11
