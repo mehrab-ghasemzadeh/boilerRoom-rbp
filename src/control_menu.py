@@ -50,7 +50,7 @@ from auth import (
     set_credentials,
     token_manager,
 )
-from config import GAS_SENSORS, RELAYS, TEMPERATURE_SENSORS, UNITS
+from config import GAS_SENSORS, ONE_WIRE_PATH, RELAYS, TEMPERATURE_SENSORS, UNITS
 from config_editor import (
     LIMIT_FIELDS,
     ConfigEditError,
@@ -101,6 +101,7 @@ from schedule_runner import (
     relay_for_target,
     schedule_runner,
 )
+from sensor_watcher import sensor_watcher
 
 # relay role -> schedule target type, the reverse of schedule_runner's map
 ROLE_TARGET = {role: kind for kind, role in TARGET_ROLE.items()}
@@ -165,6 +166,7 @@ MENU = """
   9) Show status
  10) Change language
  11) Anti-freeze temperatures
+ 12) Thermal sensor IDs
   0) Quit
 > """
 
@@ -215,6 +217,7 @@ MAIN_ITEMS = (
     ("9", "Status"),
     ("10", "Change language"),
     ("11", "Anti-freeze"),
+    ("12", "Thermal sensor IDs"),
     ("0", "Quit"),
 )
 
@@ -285,6 +288,7 @@ FA_MAIN_ITEMS = (
     ("9", "وضعیت"),
     ("10", "زبان"),
     ("11", "ضدیخ"),
+    ("12", "آیدی سنسور های دما"),
     ("0", "خروج"),
 )
 
@@ -2977,6 +2981,84 @@ async def _announce_antifreeze(state: RuntimeState, summary: str) -> None:
     await push_device_state(state)
 
 
+async def _sensor_ids_menu(state: RuntimeState) -> None:
+    """
+    Every thermal sensor the bus has ever seen, in the order it was connected.
+
+    The watcher task keeps the order; this is the view of it. On
+    the panel it is a live list — a probe fitted while the screen
+    is open appears without a keypress, which is the point of
+    watching.
+    """
+    view = screen()
+    if view is None:
+        await _sensor_ids_menu_terminal(state)
+        return
+
+    if sensor_watcher.bus_available is False:
+        await _message(
+            state,
+            "Thermal sensor IDs",
+            [
+                _t(
+                    f"No 1-Wire bus at {ONE_WIRE_PATH}",
+                    f"گذرگاه 1-Wire در {ONE_WIRE_PATH} نیست",
+                ),
+                "",
+                _t(
+                    "Thermal sensors cannot be watched.",
+                    "سنسورهای دما قابل پایش نیستند.",
+                ),
+            ],
+        )
+        return
+
+    await view.watch(
+        "Thermal sensor IDs",
+        sensor_watcher.rows,
+        interval=sensor_watcher.interval,
+    )
+
+
+async def _sensor_ids_menu_terminal(state: RuntimeState) -> None:
+    """
+    The terminal's face of the watcher: the same list, refreshed on a timer.
+
+    One reader is held open for the whole visit — whatever is typed
+    ends the screen, and a second reader would race it for the
+    keyboard. The list is reprinted every interval until then.
+    """
+    interval = sensor_watcher.interval
+    reader = asyncio.create_task(
+        input_device().read_line(
+            "  Enter to leave (the list refreshes until then) ...\n"
+        )
+    )
+    stopping = asyncio.create_task(state.shutdown.wait())
+    try:
+        while not state.shutdown.is_set():
+            _set_context("Thermal sensor IDs")
+            for line in sensor_watcher.describe():
+                await state.echo(line)
+            await _flush_page(state)
+
+            done, _ = await asyncio.wait(
+                {reader, stopping},
+                timeout=interval,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if reader in done:
+                # The answer is irrelevant: any line leaves, the
+                # same way an empty answer does everywhere else in
+                # the menu.
+                await reader
+                return
+    finally:
+        for task in (reader, stopping):
+            if not task.done():
+                task.cancel()
+
+
 async def _handle_choice(state: RuntimeState, choice: str) -> None:
     if choice == "1":
         await _show_last_readings(state)
@@ -3000,6 +3082,8 @@ async def _handle_choice(state: RuntimeState, choice: str) -> None:
         await _language_menu(state)
     elif choice == "11":
         await _antifreeze_menu(state)
+    elif choice == "12":
+        await _sensor_ids_menu(state)
     elif choice == "0":
         await state.echo("\n[menu] Shutting down ...")
         state.shutdown.set()

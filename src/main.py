@@ -35,6 +35,7 @@ from mode_store import load_modes
 from record_sync import adopt_device_record, load_mapping
 from runtime_state import RuntimeState
 from schedule_runner import ScheduleError, load_cached_schedule, schedule_runner
+from sensor_watcher import sensor_watcher
 from state_publisher import run_state_publisher
 from telemetry_client import post_telemetry
 from ws_client import run_websocket_client
@@ -711,6 +712,17 @@ async def main() -> None:
     # and a pair that only came back after the first check would be a pair that
     # had already been ignored once.
     await anti_freeze.load_local(state)
+    # The 1-Wire connection order, before any task starts: the
+    # watcher task polls the bus, and the cache is what says
+    # which probe was fitted first when the agent itself was
+    # not running to see it.
+    sensor_watcher.mock = USE_MOCK_HARDWARE
+    await sensor_watcher.load()
+    if sensor_watcher.sensors:
+        await state.log(
+            f"[sensor] Restored {len(sensor_watcher.sensors)} thermal "
+            "sensor(s) from the watch cache"
+        )
     await print_startup_banner(state)
 
     auth_task = asyncio.create_task(auth_loop(state), name="auth_loop")
@@ -720,6 +732,7 @@ async def main() -> None:
     schedule_task = asyncio.create_task(schedule_loop(state), name="schedule_loop")
     record_task = asyncio.create_task(device_record_loop(state), name="device_record")
     publish_task = asyncio.create_task(run_state_publisher(state), name="state_publisher")
+    watch_task = asyncio.create_task(sensor_watcher.run(state), name="sensor_watcher")
     tasks = (
         auth_task,
         sensor_task,
@@ -728,6 +741,7 @@ async def main() -> None:
         schedule_task,
         record_task,
         publish_task,
+        watch_task,
     )
 
     try:
