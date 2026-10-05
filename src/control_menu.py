@@ -72,6 +72,11 @@ from display_canvas import text_width, truncate, wrap
 from keypad_layout import CANCEL, ENTER, NEXT, cap_for
 from logging_setup import get_logger
 import language
+from anti_freeze import (
+    AntiFreezeError,
+    anti_freeze,
+)
+from anti_freeze import choices as antifreeze_choices
 from mapping_provider import DEFAULT_MAPPING_PATH
 from limits_guard import limit_guard
 from runtime_state import RuntimeState
@@ -159,6 +164,7 @@ MENU = """
   8) Show device mapping
   9) Show status
  10) Change language
+ 11) Anti-freeze temperatures
   0) Quit
 > """
 
@@ -166,6 +172,7 @@ TEMPERATURE_MENU = """
   1) Set a boiler's temperature
   2) Clear a boiler's temperature (use the device-wide limit)
   3) Device-wide safety limits
+  4) Anti-freeze temperatures
   0) Back
 > """
 
@@ -174,6 +181,13 @@ LIMITS_MENU = """
   2) Min water temperature
   3) Max ambient temperature
   4) Discard local edits (back to the published config)
+  0) Back
+> """
+
+ANTIFREEZE_MENU = """
+  1) Temperature that turns anti-freeze on
+  2) Temperature that turns it off again
+  3) Restore the built-in defaults
   0) Back
 > """
 
@@ -200,6 +214,7 @@ MAIN_ITEMS = (
     ("8", "Device mapping"),
     ("9", "Status"),
     ("10", "Change language"),
+    ("11", "Anti-freeze"),
     ("0", "Quit"),
 )
 
@@ -215,6 +230,14 @@ TEMPERATURE_ITEMS = (
     ("1", "Set boiler temp"),
     ("2", "Clear boiler temp"),
     ("3", "Safety limits"),
+    ("4", "Anti-freeze temps"),
+    ("0", "Back"),
+)
+
+ANTIFREEZE_ITEMS = (
+    ("1", "Turn on below"),
+    ("2", "Turn off above"),
+    ("3", "Restore defaults"),
     ("0", "Back"),
 )
 
@@ -261,6 +284,7 @@ FA_MAIN_ITEMS = (
     ("8", "نگاشت دستگاه"),
     ("9", "وضعیت"),
     ("10", "زبان"),
+    ("11", "ضدیخ"),
     ("0", "خروج"),
 )
 
@@ -268,6 +292,14 @@ FA_TEMPERATURE_ITEMS = (
     ("1", "تنظیم دمای دیگ"),
     ("2", "حذف دمای دیگ"),
     ("3", "حدود ایمنی"),
+    ("4", "دمای ضدیخ"),
+    ("0", "بازگشت"),
+)
+
+FA_ANTIFREEZE_ITEMS = (
+    ("1", "روشن‌سازی زیر"),
+    ("2", "خاموش‌سازی بالای"),
+    ("3", "بازگشت به پیش‌فرض"),
     ("0", "بازگشت"),
 )
 
@@ -295,6 +327,7 @@ FA_TITLES = {
     "Schedule": "زمان‌بندی",
     "Temperatures": "دماها",
     "Safety limits": "حدود ایمنی",
+    "Anti-freeze": "ضدیخ",
 }
 
 FA_LABELS = {
@@ -313,6 +346,7 @@ _FA_ITEMS = {
     "Schedule": FA_SCHEDULE_V2_ITEMS,
     "Temperatures": FA_TEMPERATURE_ITEMS,
     "Safety limits": FA_LIMITS_ITEMS,
+    "Anti-freeze": FA_ANTIFREEZE_ITEMS,
     "Menu": FA_MAIN_ITEMS,
     "Language": LANGUAGE_ITEMS,
 }
@@ -2105,6 +2139,9 @@ async def _show_temperature_status(state: RuntimeState) -> None:
     for line in limit_guard.describe(config, setpoints):
         await state.echo(f"  {line}")
 
+    for line in anti_freeze.describe():
+        await state.echo(f"  {line}")
+
     unpublished = await state.unpublished_setpoints()
     if unpublished:
         await state.echo(
@@ -2706,6 +2743,240 @@ async def _limits_menu(state: RuntimeState) -> None:
         await _flush_page(state)
 
 
+async def _antifreeze_menu(state: RuntimeState) -> None:
+    """
+    Change the two temperatures anti-freeze works between.
+
+    Same reasoning as the safety limits: an operator standing in the boiler room
+    should be able to move the freeze point without a laptop, and this is the one
+    setting that matters most when it is wrong — too high and the room never
+    protects itself, too low and the heating runs for ever.
+
+    A pair set here is kept on the card, so it survives a restart, and the
+    built-in defaults can be put back from the same screen. The environment
+    variables remain the defaults for a card that has never been changed.
+    """
+    while not state.shutdown.is_set():
+        _set_context("Anti-freeze")
+        await _show_antifreeze_status(state)
+
+        try:
+            choice = await _choose(
+                state, "Anti-freeze", ANTIFREEZE_ITEMS, ANTIFREEZE_MENU
+            )
+        except EOFError:
+            state.shutdown.set()
+            return
+
+        _set_context(_label_for(ANTIFREEZE_ITEMS, choice, "Anti-freeze"))
+
+        if choice == "1":
+            await _change_antifreeze_threshold(
+                state, "on_c", _t("Turn on below", "روشن‌سازی زیر")
+            )
+        elif choice == "2":
+            await _change_antifreeze_threshold(
+                state, "off_c", _t("Turn off above", "خاموش‌سازی بالای")
+            )
+        elif choice == "3":
+            await _restore_antifreeze_defaults(state)
+        elif choice in ("0", "", BACK):
+            await state.echo("")
+            return
+        else:
+            await state.echo(f"\n[menu] Unknown option: {choice!r}\n")
+
+        await _flush_page(state)
+
+
+async def _show_antifreeze_status(state: RuntimeState) -> None:
+    """The thresholds in force, where they came from, and what the latch is doing."""
+    source = (
+        _t("set on this device", "تنظیم‌شده روی همین دستگاه")
+        if anti_freeze.is_local
+        else _t("built-in default", "پیش‌فرض")
+    )
+    await state.echo(
+        f"\n[menu] {_t('Anti-freeze', 'ضدیخ')} — "
+        f"{_t('turn on below', 'روشن‌سازی زیر')} {anti_freeze.on_c:.1f}{DEGREE}C, "
+        f"{_t('off above', 'خاموش‌سازی بالای')} {anti_freeze.off_c:.1f}{DEGREE}C "
+        f"({source})"
+    )
+
+    if anti_freeze.is_local and not anti_freeze.local_persisted:
+        await state.echo(
+            "[menu] "
+            + _t(
+                "WARNING: not saved to disk — these will not survive a restart",
+                "هشدار: روی دیسک ذخیره نشده و پس از راه‌اندازی مجدد از بین می‌رود",
+            )
+        )
+
+    for line in anti_freeze.describe():
+        await state.echo(f"  {line}")
+
+
+async def _change_antifreeze_threshold(
+    state: RuntimeState, field: str, label: str
+) -> None:
+    """
+    Set one threshold from the values it is allowed to take.
+
+    A list on the panel rather than a number to type: the keypad is arrows and
+    two accept keys, and the whole point of this screen is a value that is
+    compared against another one, so the operator needs to see the neighbouring
+    degrees rather than remember them. 2 and 8 move, 5 and 6 choose.
+    """
+    current = round(
+        anti_freeze.on_c if field == "on_c" else anti_freeze.off_c, 1
+    )
+    values = antifreeze_choices(field, anti_freeze.on_c, anti_freeze.off_c)
+
+    if screen() is None:
+        await _type_antifreeze_threshold(state, field, label, current, values)
+        return
+
+    view = screen()
+    rows = [f"{value:g}{DEGREE}C" for value in values]
+
+    # Opens on the value in force, so the highlight says what this is before a
+    # single key is pressed — the same reason the boiler list does it.
+    index = values.index(current) if current in values else 0
+
+    chosen = await view.select(label, rows, index=index, legend=_SET_LEGEND)
+    if chosen is None:
+        return
+
+    value = values[chosen]
+    if value == current:
+        await view.message(
+            "No change", [f"{label} {_t('is already', 'هم‌اکنون')} {value:g}{DEGREE}C."]
+        )
+        return
+
+    if field == "on_c":
+        pair = (value, anti_freeze.off_c)
+    else:
+        pair = (anti_freeze.on_c, value)
+
+    await _apply_antifreeze(state, *pair, summary=f"{label} {value:g}{DEGREE}C")
+
+
+async def _type_antifreeze_threshold(
+    state: RuntimeState,
+    field: str,
+    label: str,
+    current: float,
+    values: list[float],
+) -> None:
+    """
+    The terminal's version of the list: the range it covers, and a number.
+
+    Same bounds the panel offers — the lowest and highest are printed, and
+    anything outside them is refused — so the two ways of setting this cannot
+    disagree about what is allowed.
+    """
+    raw = await _prompt(
+        f"\n  {label} is {current:.1f}{DEGREE}C.\n"
+        f"  {_t('Allowed', 'مجاز')}: {values[0]:g}{DEGREE}C "
+        f"{_t('to', 'تا')} {values[-1]:g}{DEGREE}C\n"
+        f"  {_t('New value in °C', 'مقدار جدید بر حسب °C')} "
+        f"({_t('empty = cancel', 'خالی = لغو')}): "
+    )
+    if not raw:
+        await state.echo(f"[menu] {_t('Cancelled.', 'لغو شد.')}\n")
+        return
+
+    try:
+        # A comma is the decimal separator on the keypad of half the world.
+        value = float(raw.strip().replace(",", "."))
+    except ValueError:
+        await state.echo(
+            f"[menu] {_t('Not a temperature', 'عدد دما نیست')} — "
+            f"{_t('enter a number, for example 8', 'یک عدد وارد کنید، مثلا 8')}\n"
+        )
+        return
+
+    if not values[0] <= value <= values[-1]:
+        await state.echo(
+            f"[menu] {value:g}{DEGREE}C {_t('is outside the range', 'خارج از محدوده است')}"
+            f" ({values[0]:g}{DEGREE}C … {values[-1]:g}{DEGREE}C)\n"
+        )
+        return
+
+    if value == current:
+        await state.echo(
+            f"[menu] {_t('Unchanged.', 'بدون تغییر.')} {label} "
+            f"{_t('is already', 'هم‌اکنون')} {value:g}{DEGREE}C\n"
+        )
+        return
+
+    if field == "on_c":
+        pair = (value, anti_freeze.off_c)
+    else:
+        pair = (anti_freeze.on_c, value)
+
+    await _apply_antifreeze(state, *pair, summary=f"{label} {value:g}{DEGREE}C")
+
+
+async def _apply_antifreeze(
+    state: RuntimeState, on_c: float, off_c: float, *, summary: str
+) -> None:
+    """Adopt a pair, or say plainly why it was refused."""
+    try:
+        await anti_freeze.set_thresholds(on_c, off_c, log=state.log)
+    except AntiFreezeError as exc:
+        # Refused as a pair, so changing one number cannot leave the other in a
+        # state the latch cannot run in.
+        await state.echo(f"[menu] {_t('Rejected', 'رد شد')}: {exc}\n")
+        return
+
+    await _announce_antifreeze(state, summary)
+
+
+async def _restore_antifreeze_defaults(state: RuntimeState) -> None:
+    """Throw away the pair set on this device and go back to the built-in one."""
+    if not anti_freeze.is_local:
+        await state.echo(
+            f"\n[menu] {_t('These are already the built-in defaults.', 'این‌ها هم‌اکنون پیش‌فرض هستند.')}\n"
+        )
+        return
+
+    try:
+        await anti_freeze.restore_defaults(log=state.log)
+    except AntiFreezeError as exc:
+        await state.echo(
+            f"[menu] {_t('The built-in defaults cannot be used either', 'پیش‌فرض‌های داخلی نیز قابل استفاده نیستند')}: {exc}\n"
+        )
+        return
+
+    await _announce_antifreeze(
+        state, _t("built-in defaults restored", "پیش‌فرض بازگردانده شد")
+    )
+
+
+async def _announce_antifreeze(state: RuntimeState, summary: str) -> None:
+    """Say what changed, warn if it will not survive a restart, and show the result."""
+    await state.echo(
+        f"[menu] {_t('Anti-freeze updated', 'ضدیخ به‌روزرسانی شد')} — {summary}"
+    )
+    if not anti_freeze.local_persisted:
+        await state.echo(
+            "[menu] "
+            + _t(
+                "WARNING: it could not be written to disk, so it will not survive a restart",
+                "هشدار: روی دیسک نوشته نشد و پس از راه‌اندازی مجدد از بین می‌رود",
+            )
+        )
+
+    await _show_antifreeze_status(state)
+    await state.echo("")
+
+    from ws_client import push_device_state
+
+    await push_device_state(state)
+
+
 async def _handle_choice(state: RuntimeState, choice: str) -> None:
     if choice == "1":
         await _show_last_readings(state)
@@ -2727,6 +2998,8 @@ async def _handle_choice(state: RuntimeState, choice: str) -> None:
         await _show_status(state)
     elif choice == "10":
         await _language_menu(state)
+    elif choice == "11":
+        await _antifreeze_menu(state)
     elif choice == "0":
         await state.echo("\n[menu] Shutting down ...")
         state.shutdown.set()
@@ -2893,6 +3166,13 @@ async def _status_lines(state: RuntimeState) -> list[str]:
     for target, reason in sorted(blocks.items(), key=str):
         lines.append(f"  {target} cut:")
         lines.append(f"    {_short_reason(reason)}")
+
+    # Anti-freeze only takes a line when it is holding something, which is the
+    # only time an operator needs to know: it is why a unit is on with nothing in
+    # the programme asking for it.
+    freeze = anti_freeze.status_line()
+    if freeze is not None:
+        lines.append(freeze)
 
     for index, entry in sorted(setpoints.items()):
         published = "" if entry.published else " (unsent)"

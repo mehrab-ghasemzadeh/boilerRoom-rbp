@@ -496,6 +496,15 @@ class ScheduleRunner:
             if await state.get_mode(target) == "manual":
                 continue
 
+            # Anti-freeze holds a unit on until the water is warm again, whatever
+            # the programme says. Asked here rather than left to the guard, because
+            # this tick runs every minute and would otherwise put the unit straight
+            # back off seconds after the latch engaged.
+            from anti_freeze import anti_freeze
+
+            if anti_freeze.holds(target):
+                continue
+
             relay_id = relay_for_target(target)
             if relay_id is None:
                 if target not in self._unmapped_warned:
