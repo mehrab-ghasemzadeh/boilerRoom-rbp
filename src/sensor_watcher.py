@@ -254,6 +254,13 @@ class SensorWatcher:
                 "",
             ]
 
+        if self.bus_available is None:
+            return [
+                "[menu] Thermal sensor IDs — checking the 1-Wire bus ... "
+                "(this screen refreshes until it answers)",
+                "",
+            ]
+
         connected = sum(1 for entry in self.sensors.values() if entry.connected)
         lines = [
             "[menu] Thermal sensor IDs — "
@@ -261,12 +268,15 @@ class SensorWatcher:
             "in the order they were connected",
         ]
         if not self.sensors:
-            lines.append("  No thermal sensors on the bus yet.")
+            lines.append(
+                "  No thermal sensors on the bus yet — this list fills in as "
+                "probes are fitted."
+            )
         for order, entry in enumerate(self.sensors.values(), start=1):
             state = (
                 f"connected since {_iso(entry.first_seen)}"
                 if entry.connected
-                else f"disconnected — last seen {_iso(entry.last_seen)}"
+                else f"DISCONNECTED — last seen {_iso(entry.last_seen)}"
             )
             lines.append(f"  {order}) {entry.sensor_id}  {state}")
         lines.append("")

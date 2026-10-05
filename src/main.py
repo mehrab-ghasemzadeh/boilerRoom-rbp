@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import signal
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from auth import (
@@ -97,6 +98,11 @@ DEVICE_RECORD_REFRESH_SECONDS = 900
 AUTH_RETRY_DELAY_SECONDS = 10
 AUTH_RETRY_MAX_DELAY_SECONDS = 300
 
+# How long to wait before starting a task again after it fell over, and the
+# ceiling that wait backs off to. See supervise().
+TASK_RESTART_SECONDS = 5.0
+TASK_RESTART_MAX_SECONDS = 300.0
+
 # ----------------------------------------------------
 # Hardware selection
 # ----------------------------------------------------
@@ -158,6 +164,65 @@ async def print_startup_banner(state: RuntimeState) -> None:
     await state.echo("")
 
 
+async def _sensor_cycle(
+    state: RuntimeState,
+    temperature_reader,
+    gas_reader,
+    *,
+    offline_notice_shown: bool,
+) -> bool:
+    """
+    One pass of the read cycle. Returns the updated "offline" flag.
+
+    Kept separate from the loop so the loop can put a try around the whole
+    thing: a cycle that raises is a bad cycle, not a reason to stop heating.
+    """
+    temperatures, gas = await asyncio.gather(
+        temperature_reader.read_all(),
+        gas_reader.read_all(),
+    )
+
+    # Correct readings before anything consumes them, so the database,
+    # the limit guard and telemetry all agree on the value.
+    temperatures = apply_calibration(temperatures)
+
+    await state.update_readings(temperatures, gas)
+    await save_readings(temperatures, gas)
+
+    await error_reporter.check_temperature_faults(
+        temperatures,
+        log=state.log,
+    )
+
+    # Enforce config limits before telemetry, so a cut is reported in
+    # the same cycle it happens.
+    await limit_guard.check(state, temperatures)
+
+    # Anti-freeze after the limit guard, so a unit cut for running hot is
+    # already blocked by the time this looks at it — the cut outranks it.
+    await anti_freeze.check(state, temperatures)
+
+    # Pacing lives in RuntimeState because a local relay change also
+    # posts telemetry; both have to share one "last posted" clock or
+    # they double up. The first cycle posts immediately so a fresh boot
+    # shows up on the server without waiting out the interval.
+    due = await state.telemetry_due()
+
+    if due and not state.authenticated.is_set():
+        if not offline_notice_shown:
+            await state.log("[telemetry] Offline — holding until a session exists")
+        return True
+
+    if due:
+        await state.mark_telemetry_posted()
+        try:
+            await post_telemetry(state, temperatures, gas)
+        except Exception as exc:
+            await state.log(f"[telemetry] Failed to post: {exc}", level=logging.WARNING)
+
+    return False
+
+
 async def sensor_loop(state: RuntimeState) -> None:
     # Hardware is addressed by the mapping — GPIO pins, 1-Wire ROM codes, ADC
     # channels — so there is nothing to construct until one exists.
@@ -176,6 +241,7 @@ async def sensor_loop(state: RuntimeState) -> None:
         temperature_reader.start(),
         gas_reader.start(),
         relay_controller.start(),
+        return_exceptions=True,
     )
 
     # Relays exist now, so a cached schedule can take effect immediately rather
@@ -183,51 +249,38 @@ async def sensor_loop(state: RuntimeState) -> None:
     await schedule_runner.evaluate(state)
 
     offline_notice_shown = False
+    failed_cycles = 0
 
     try:
         while not state.shutdown.is_set():
-            temperatures, gas = await asyncio.gather(
-                temperature_reader.read_all(),
-                gas_reader.read_all(),
-            )
-
-            # Correct readings before anything consumes them, so the database,
-            # the limit guard and telemetry all agree on the value.
-            temperatures = apply_calibration(temperatures)
-
-            await state.update_readings(temperatures, gas)
-            await save_readings(temperatures, gas)
-
-            await error_reporter.check_temperature_faults(
-                temperatures,
-                log=state.log,
-            )
-
-            # Enforce config limits before telemetry, so a cut is reported in
-            # the same cycle it happens.
-            await limit_guard.check(state, temperatures)
-
-            # Anti-freeze after the limit guard, so a unit cut for running hot is
-            # already blocked by the time this looks at it — the cut outranks it.
-            await anti_freeze.check(state, temperatures)
-
-            # Pacing lives in RuntimeState because a local relay change also
-            # posts telemetry; both have to share one "last posted" clock or
-            # they double up. The first cycle posts immediately so a fresh boot
-            # shows up on the server without waiting out the interval.
-            due = await state.telemetry_due()
-
-            if due and not state.authenticated.is_set():
-                if not offline_notice_shown:
-                    offline_notice_shown = True
-                    await state.log("[telemetry] Offline — holding until a session exists")
-            elif due:
-                offline_notice_shown = False
-                await state.mark_telemetry_posted()
-                try:
-                    await post_telemetry(state, temperatures, gas)
-                except Exception as exc:
-                    await state.log(f"[telemetry] Failed to post: {exc}", level=logging.WARNING)
+            try:
+                offline_notice_shown = await _sensor_cycle(
+                    state,
+                    temperature_reader,
+                    gas_reader,
+                    offline_notice_shown=offline_notice_shown,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                # A probe being pulled out, a bus that has gone, a database that
+                # would not take a write: none of those are reasons for the
+                # agent to stop heating. Say it, then go round again — the next
+                # cycle is a minute away and usually fine.
+                failed_cycles += 1
+                await state.log(
+                    f"[sensor] Read cycle failed ({failed_cycles} in a row): "
+                    f"{type(exc).__name__}: {exc} — retrying next cycle",
+                    level=logging.ERROR,
+                )
+            else:
+                if failed_cycles:
+                    await state.log(
+                        f"[sensor] Read cycle recovered after {failed_cycles} "
+                        "failure(s)",
+                        level=logging.WARNING,
+                    )
+                failed_cycles = 0
 
             interval = await state.get_read_interval()
             try:
@@ -479,16 +532,21 @@ async def device_record_loop(state: RuntimeState) -> None:
         async with state.record_lock:
             try:
                 record, payload = await fetch_device_record()
+                # Adoption is inside the try, not after it: a record that has
+                # just lost a sensor is exactly the record most likely to be
+                # refused, and refusing it has to be a log line rather than the
+                # end of the loop that would fetch the next one.
+                await adopt_device_record(state, record, payload)
             except DeviceRecordError as exc:
                 await state.log(
                     f"[device] Server record unusable: {exc}", level=logging.WARNING
                 )
             except Exception as exc:
                 await state.log(
-                    f"[device] Failed to fetch record: {exc}", level=logging.WARNING
+                    f"[device] Failed to apply the server record: "
+                    f"{type(exc).__name__}: {exc}",
+                    level=logging.WARNING,
                 )
-            else:
-                await adopt_device_record(state, record, payload)
 
         # Wakes early when something asks for a refresh — reporting modes
         # upstream does, because this poll is what reconciles them.
@@ -637,6 +695,95 @@ async def restore_local_config(state: RuntimeState) -> None:
     )
 
 
+async def supervise(
+    state: RuntimeState,
+    jobs: dict[str, Callable[[RuntimeState], Awaitable[None]]],
+) -> None:
+    """
+    Run the agent's tasks until shutdown, restarting any that fall over.
+
+    This used to be a plain ``asyncio.gather`` of every task, which meant the
+    agent's lifetime was the shortest-lived task's: one unhandled exception
+    anywhere — a probe pulled out of the bus at the wrong moment, a record the
+    device could not apply, a screen that raised while drawing — propagated out
+    of gather, and main released the relays, closed the database and exited.
+    systemd restarted it, it crashed again on the same fault, and a heating
+    system spent its time in a restart loop with the server seeing a device that
+    was reporting nothing.
+
+    A task that *returns* is left alone: several of these are meant to finish
+    (``auth_loop`` returns once it has a session, ``run_control_menu`` returns
+    when there is nothing to control this device by hand), and restarting them
+    would spin. Only a task that *raises* is started again, and only after a
+    pause that grows while it keeps happening, so a task failing on every start
+    logs rather than burns the CPU.
+
+    The supervisor returns when every task has returned or shutdown is set, so
+    an agent with nothing left to do still exits cleanly.
+    """
+
+    async def runner(name: str, start: Callable[[RuntimeState], Awaitable[None]]) -> None:
+        backoff = TASK_RESTART_SECONDS
+
+        while not state.shutdown.is_set():
+            try:
+                await start(state)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                await state.log(
+                    f"[{name}] Died: {type(exc).__name__}: {exc} — restarting in "
+                    f"{backoff:.0f}s",
+                    level=logging.ERROR,
+                )
+                try:
+                    await asyncio.wait_for(state.shutdown.wait(), timeout=backoff)
+                    return  # shutdown, not a retry
+                except asyncio.TimeoutError:
+                    pass
+                backoff = min(backoff * 2, TASK_RESTART_MAX_SECONDS)
+                continue
+
+            # Returned normally: it had its turn and is done.
+            return
+
+    tasks = {
+        name: asyncio.create_task(runner(name, start), name=name)
+        for name, start in jobs.items()
+    }
+
+    shutting_down = asyncio.create_task(state.shutdown.wait())
+
+    try:
+        # Either shutdown arrives, or every task has finished its turn. The
+        # second case is real: a device with no mapping and no input device has
+        # nothing left to run, and used to exit rather than sit there.
+        #
+        # The test is on the tasks alone. Including the shutdown waiter would
+        # mean never all of them being done — that one is *supposed* to still
+        # be waiting — so the loop would spin on an already-finished wait
+        # instead of leaving.
+        while not state.shutdown.is_set():
+            if all(task.done() for task in tasks.values()):
+                break
+            await asyncio.wait(
+                [*tasks.values(), shutting_down],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+    except asyncio.CancelledError:
+        state.shutdown.set()
+        raise
+    finally:
+        state.shutdown.set()
+        shutting_down.cancel()
+        for task in tasks.values():
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks.values(), return_exceptions=True)
+        await state.log("Shutdown complete.")
+        shutdown_logging()
+
+
 def install_signal_handlers(state: RuntimeState) -> None:
     """
     Ask the loop to shut down cleanly on SIGTERM/SIGINT.
@@ -725,37 +872,19 @@ async def main() -> None:
         )
     await print_startup_banner(state)
 
-    auth_task = asyncio.create_task(auth_loop(state), name="auth_loop")
-    sensor_task = asyncio.create_task(sensor_loop(state), name="sensor_loop")
-    menu_task = asyncio.create_task(run_control_menu(state), name="control_menu")
-    ws_task = asyncio.create_task(run_websocket_client(state), name="websocket_client")
-    schedule_task = asyncio.create_task(schedule_loop(state), name="schedule_loop")
-    record_task = asyncio.create_task(device_record_loop(state), name="device_record")
-    publish_task = asyncio.create_task(run_state_publisher(state), name="state_publisher")
-    watch_task = asyncio.create_task(sensor_watcher.run(state), name="sensor_watcher")
-    tasks = (
-        auth_task,
-        sensor_task,
-        menu_task,
-        ws_task,
-        schedule_task,
-        record_task,
-        publish_task,
-        watch_task,
+    await supervise(
+        state,
+        {
+            "auth_loop": auth_loop,
+            "sensor_loop": sensor_loop,
+            "control_menu": run_control_menu,
+            "websocket_client": run_websocket_client,
+            "schedule_loop": schedule_loop,
+            "device_record": device_record_loop,
+            "state_publisher": run_state_publisher,
+            "sensor_watcher": sensor_watcher.run,
+        },
     )
-
-    try:
-        await asyncio.gather(*tasks)
-    except asyncio.CancelledError:
-        state.shutdown.set()
-    finally:
-        state.shutdown.set()
-        for task in tasks:
-            if not task.done():
-                task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        await state.log("Shutdown complete.")
-        shutdown_logging()
 
 
 if __name__ == "__main__":

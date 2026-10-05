@@ -2981,6 +2981,51 @@ async def _announce_antifreeze(state: RuntimeState, summary: str) -> None:
     await push_device_state(state)
 
 
+def _sensor_id_rows() -> list[str]:
+    """
+    The panel's sensor-ID list, in whatever state the bus is in.
+
+    One live list rather than a decision made once on the way in, because the
+    bus does not hold still: it can be empty at boot, come up a second later, or
+    lose a probe while this screen is open. Every one of those states is a row
+    here, so the screen is right at every moment instead of only at the moment
+    it was opened — which is what "watching" has to mean if it is going to be
+    worth anything at the panel.
+    """
+    bus = sensor_watcher.bus_available
+
+    if bus is False:
+        return [
+            _t(f"No 1-Wire bus at {ONE_WIRE_PATH}", f"گذرگاه 1-Wire در {ONE_WIRE_PATH} نیست"),
+            _t(
+                "Thermal sensors cannot be watched.",
+                "سنسورهای دما قابل پایش نیستند.",
+            ),
+        ]
+
+    if bus is None:
+        # Asked for before the first scan has run, which is the first second of
+        # the agent's life. Said rather than shown blank, because a blank panel
+        # and a panel saying "nothing here" look the same and mean opposite
+        # things.
+        return [_t("Checking the 1-Wire bus ...", "در حال بررسی گذرگاه 1-Wire ...")]
+
+    rows = sensor_watcher.rows()
+    if not rows:
+        return [
+            _t(
+                "No thermal sensors on the bus yet.",
+                "هنوز سنسور دمایی روی گذرگاه نیست.",
+            ),
+            _t(
+                "This list fills in as probes are fitted.",
+                "این فهرست با وصل شدن سنسورها پر می‌شود.",
+            ),
+        ]
+
+    return rows
+
+
 async def _sensor_ids_menu(state: RuntimeState) -> None:
     """
     Every thermal sensor the bus has ever seen, in the order it was connected.
@@ -2988,34 +3033,19 @@ async def _sensor_ids_menu(state: RuntimeState) -> None:
     The watcher task keeps the order; this is the view of it. On
     the panel it is a live list — a probe fitted while the screen
     is open appears without a keypress, which is the point of
-    watching.
+    watching. A probe that is pulled out is not deleted from the
+    list: it keeps its number, marked with a ``~``, because "which probe
+    was the second one I fitted" is the thing an installer is here for and
+    renumbering the list would lose it.
     """
     view = screen()
     if view is None:
         await _sensor_ids_menu_terminal(state)
         return
 
-    if sensor_watcher.bus_available is False:
-        await _message(
-            state,
-            "Thermal sensor IDs",
-            [
-                _t(
-                    f"No 1-Wire bus at {ONE_WIRE_PATH}",
-                    f"گذرگاه 1-Wire در {ONE_WIRE_PATH} نیست",
-                ),
-                "",
-                _t(
-                    "Thermal sensors cannot be watched.",
-                    "سنسورهای دما قابل پایش نیستند.",
-                ),
-            ],
-        )
-        return
-
     await view.watch(
         "Thermal sensor IDs",
-        sensor_watcher.rows,
+        _sensor_id_rows,
         interval=sensor_watcher.interval,
     )
 
@@ -3050,8 +3080,21 @@ async def _sensor_ids_menu_terminal(state: RuntimeState) -> None:
             if reader in done:
                 # The answer is irrelevant: any line leaves, the
                 # same way an empty answer does everywhere else in
-                # the menu.
-                await reader
+                # the menu. EOFError is the terminal closing, which
+                # the menu loop above already reads as "no input
+                # device left"; anything else is this screen
+                # leaving the same way, because a screen that cannot
+                # be answered has nothing to keep showing.
+                try:
+                    await reader
+                except EOFError:
+                    raise
+                except Exception as exc:
+                    await state.log(
+                        f"[menu] Thermal sensor IDs: input failed "
+                        f"({type(exc).__name__}: {exc}) — leaving the screen",
+                        level=logging.WARNING,
+                    )
                 return
     finally:
         for task in (reader, stopping):
@@ -3755,6 +3798,11 @@ async def _run_menu_loop(state: RuntimeState, device) -> None:
         # reading while the operator looks at six blank rows.
         state.capture_echo()
 
+    # How many screens have failed this visit, for the log line that says so on
+    # the way out. A single failure is worth nothing; a screen that fails every
+    # time it is opened is worth saying out loud.
+    _faults = 0
+
     while not state.shutdown.is_set():
         # One handler for the whole step, because every screen below reads
         # keys and any of them can find the input device gone — stdin closed,
@@ -3798,3 +3846,42 @@ async def _run_menu_loop(state: RuntimeState, device) -> None:
         except EOFError:
             state.shutdown.set()
             break
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # A screen that could not do its job — a sensor list built from
+            # something that has just been removed, a mapping that changed
+            # mid-edit, hardware that stopped answering. The menu is the one
+            # place an operator goes when something is wrong, so ending the
+            # whole agent over one bad screen is the wrong trade: say what
+            # happened, put it in the log where it can be found, and go back to
+            # the main menu so the next thing can still be tried.
+            await state.log(
+                f"[menu] {_context} failed: {type(exc).__name__}: {exc}",
+                level=logging.ERROR,
+            )
+            try:
+                await _notice(
+                    state,
+                    "Menu error",
+                    [
+                        _t("This screen could not be shown.", "این صفحه نمایش داده نشد."),
+                        "",
+                        f"{type(exc).__name__}: {exc}",
+                        "",
+                        _t("Back at the main menu.", "به منوی اصلی برگشتید."),
+                    ],
+                )
+            except Exception:
+                # Even the notice failed — the display or the input device is
+                # gone. Nothing left to say it on, and no reason to spin.
+                pass
+            _set_context("Menu")
+            _faults += 1
+
+    if _faults:
+        await state.log(
+            f"[menu] {('panel' if view is not None else 'terminal')} menu closed "
+            f"after {_faults} screen failure(s)",
+            level=logging.WARNING,
+        )
