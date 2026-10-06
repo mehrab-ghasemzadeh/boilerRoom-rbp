@@ -70,6 +70,7 @@ from device_config import ConfigError, config_store, describe as describe_config
 from display_font import DEGREE
 from display_canvas import text_width, truncate, wrap
 from keypad_layout import CANCEL, ENTER, NEXT, SCROLL_DOWN, SCROLL_UP, cap_for
+from legend_content import get_legend
 from logging_setup import get_logger
 import language
 from anti_freeze import (
@@ -629,12 +630,6 @@ async def _relay_menu(state: RuntimeState) -> None:
         return rows
 
     # Legend for the relay table: both Enter and Next toggle the relay
-    relay_legend = (
-        SCROLL_KEYS,
-        (cap_for(ENTER), _t("toggle", "تغییر")),
-        (cap_for(NEXT), _t("toggle", "تغییر")),
-        (cap_for(CANCEL), _t("back", "بازگشت")),
-    )
 
     index = 0
     while True:
@@ -643,7 +638,7 @@ async def _relay_menu(state: RuntimeState) -> None:
             "Relay control",
             rows,
             index=index,
-            legend=relay_legend,
+            legend=get_legend("Relay Control"),
         )
         if chosen is None:
             return
@@ -880,12 +875,6 @@ async def _mode_menu(state: RuntimeState) -> None:
         return rows
 
     # Legend for the mode table: both Enter and Next change the mode
-    mode_legend = (
-        SCROLL_KEYS,
-        (cap_for(ENTER), _t("change", "تغییر")),
-        (cap_for(NEXT), _t("change", "تغییر")),
-        (cap_for(CANCEL), _t("back", "بازگشت")),
-    )
 
     index = 0
     while True:
@@ -894,7 +883,7 @@ async def _mode_menu(state: RuntimeState) -> None:
             "Unit modes",
             rows,
             index=index,
-            legend=mode_legend,
+            legend=get_legend("Unit Modes"),
         )
         if chosen is None:
             return
@@ -914,12 +903,7 @@ async def _mode_menu(state: RuntimeState) -> None:
             f"Mode for {target}",
             [f"  {m}" for m in mode_choices],
             index=mode_index,
-            legend=(
-                SCROLL_KEYS,
-                (cap_for(ENTER), _t("select", "انتخاب")),
-                (cap_for(NEXT), _t("next", "بعدی")),
-                (cap_for(CANCEL), _t("cancel", "لغو")),
-            ),
+            legend=get_legend("Mode Options"),
         )
 
         if mode_chosen is None:
@@ -1391,7 +1375,7 @@ async def _select_targets_table(state: RuntimeState, view: Screen) -> list[Targe
         return None
 
     items = [f"{str(target):<12} relay {relay_for_target(target)}" for target in targets]
-    selected, _ = await view.select_checkboxes("Select targets", items, legend=STD_LEGEND)
+    selected, _ = await view.select_checkboxes("Select targets", items, legend=get_legend("Default Checkboxes"))
     if selected is None:
         return None
 
@@ -1408,7 +1392,7 @@ async def _select_days_table(state: RuntimeState, view: Screen) -> list[str] | N
     day_names = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
     day_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     items = day_labels
-    selected, _ = await view.select_checkboxes("Select days", items, legend=STD_LEGEND)
+    selected, _ = await view.select_checkboxes("Select days", items, legend=get_legend("Default Checkboxes"))
     if selected is None:
         return None
 
@@ -1434,12 +1418,7 @@ async def _select_time_component(
         value_list = values
 
     items = [f"{v:02d}" for v in value_list]
-    index = await view.select_list(title, items, legend=(
-        SCROLL_KEYS,
-        (cap_for(ENTER), _t("select", "انتخاب")),
-        (cap_for(NEXT), _t("next", "بعدی")),
-        (cap_for(CANCEL), _t("cancel", "لغو")),
-    ))
+    index = await view.select_list(title, items, legend=get_legend("Default List"))
     if index is None:
         return None
     return value_list[index]
@@ -1448,12 +1427,7 @@ async def _select_time_component(
 async def _select_on_off(state: RuntimeState, view: Screen) -> bool | None:
     """Select ON or OFF state."""
     items = ["ON", "OFF"]
-    index = await view.select_list("Switch state", items, legend=(
-        SCROLL_KEYS,
-        (cap_for(ENTER), _t("select", "انتخاب")),
-        (cap_for(NEXT), _t("next", "بعدی")),
-        (cap_for(CANCEL), _t("cancel", "لغو")),
-    ))
+    index = await view.select_list("Switch state", items, legend=get_legend("Default List"))
     if index is None:
         return None
     return index == 0
@@ -1507,14 +1481,6 @@ async def _remove_weekly_rule_v2(state: RuntimeState) -> None:
     rules = schedule.weekly_rules
     index = 0
 
-    # Custom legend for delete weekly rule: Enter=Select, Next=Del, Cancel=Back
-    del_rule_legend = (
-        SCROLL_KEYS,
-        (cap_for(ENTER), _t("select", "انتخاب")),
-        (cap_for(NEXT), _t("del", "حذف")),
-        (cap_for(CANCEL), _t("back", "بازگشت")),
-    )
-
     while not state.shutdown.is_set():
         # Build display rows
         rows = []
@@ -1526,7 +1492,7 @@ async def _remove_weekly_rule_v2(state: RuntimeState) -> None:
                 f"-> {_on_off(rule.state)} [{targets}]"
             )
 
-        chosen = await view.select("Delete weekly rule", rows, index=index, legend=del_rule_legend)
+        chosen = await view.select("Delete weekly rule", rows, index=index, legend=get_legend("Schedule Editor"))
         if chosen is None:
             return
 
@@ -1553,12 +1519,7 @@ async def _remove_weekly_rule_v2(state: RuntimeState) -> None:
             f"Rule {index + 1}",
             ["View details", "Delete this rule", "Back to list"],
             index=0,
-            legend=(
-                SCROLL_KEYS,
-                (cap_for(ENTER), _t("Select", "انتخاب")),
-                (cap_for(NEXT), ""),
-                (cap_for(CANCEL), _t("Back", "بازگشت")),
-            ),
+            legend=get_legend("Default Select"),
         )
 
         if action is None:
@@ -1575,12 +1536,7 @@ async def _remove_weekly_rule_v2(state: RuntimeState) -> None:
                 "Confirm delete",
                 ["No, keep it", "Yes, delete it"],
                 index=0,
-                legend=(
-                    SCROLL_KEYS,
-                    (cap_for(ENTER), _t("Select", "انتخاب")),
-                    (cap_for(NEXT), ""),
-                    (cap_for(CANCEL), _t("Back", "بازگشت")),
-                ),
+                legend=get_legend("Confirm Delete"),
             )
 
             if confirm == 1:
@@ -1860,14 +1816,6 @@ async def _remove_exception_v2(state: RuntimeState) -> None:
     exceptions = schedule.exceptions
     index = 0
 
-    # Custom legend for delete exception: Enter=Select, Next=Del, Cancel=Back
-    del_exc_legend = (
-        SCROLL_KEYS,
-        (cap_for(ENTER), _t("select", "انتخاب")),
-        (cap_for(NEXT), _t("del", "حذف")),
-        (cap_for(CANCEL), _t("back", "بازگشت")),
-    )
-
     while not state.shutdown.is_set():
         # Build display rows
         rows = []
@@ -1883,7 +1831,7 @@ async def _remove_exception_v2(state: RuntimeState) -> None:
                 f"{'ON' if exc.state else 'OFF'} [{targets}]"
             )
 
-        chosen = await view.select("Delete exception", rows, index=index, legend=del_exc_legend)
+        chosen = await view.select("Delete exception", rows, index=index, legend=get_legend("Schedule Editor"))
         if chosen is None:
             return
 
@@ -1910,7 +1858,7 @@ async def _remove_exception_v2(state: RuntimeState) -> None:
             f"Exception {index + 1}",
             ["View details", "Delete this exception", "Back to list"],
             index=0,
-            legend=STD_LEGEND,
+            legend=get_legend("Default Select"),
         )
 
         if action is None:
@@ -1927,7 +1875,7 @@ async def _remove_exception_v2(state: RuntimeState) -> None:
                 "Confirm delete",
                 ["No, keep it", "Yes, delete it"],
                 index=0,
-                legend=STD_LEGEND,
+                legend=get_legend("Confirm Delete"),
             )
 
             if confirm == 1:
@@ -2020,7 +1968,7 @@ async def _schedule_editor_menu(state: RuntimeState) -> None:
                 "Remove exception",
             ],
             index=index,
-            legend=STD_LEGEND,
+            legend=get_legend("Schedule Editor"),
         )
         if chosen is None:
             return
@@ -2255,7 +2203,7 @@ async def _temperature_table(state: RuntimeState) -> None:
             for target in targets
         ]
 
-        chosen = await view.select("Temperatures", rows, index=index, legend=_SET_LEGEND)
+        chosen = await view.select("Temperatures", rows, index=index, legend=get_legend("Temperatures"))
         if chosen is None:
             return
 
@@ -2278,7 +2226,7 @@ async def _temperature_list(state: RuntimeState, target: Target) -> None:
 
     rows = [f"{value:g}{DEGREE}C" for value in values] + [DEVICE_LIMIT_ROW]
 
-    chosen = await view.select(label, rows, index=index, legend=_SET_LEGEND)
+    chosen = await view.select(label, rows, index=index, legend=get_legend("Set Temperature"))
     if chosen is None:
         return
 
@@ -2828,7 +2776,7 @@ async def _change_antifreeze_threshold(
     # single key is pressed — the same reason the boiler list does it.
     index = values.index(current) if current in values else 0
 
-    chosen = await view.select(label, rows, index=index, legend=_SET_LEGEND)
+    chosen = await view.select(label, rows, index=index, legend=get_legend("Edit Antifreeze"))
     if chosen is None:
         return
 
@@ -3021,7 +2969,7 @@ async def _reset_sensor_cache(state: RuntimeState) -> None:
             _t("Reset sensor order?", "ترتیب سنسورها بازنشانی شود؟"),
             [_t("No", "خیر"), _t("Yes", "بله")],
             index=0,
-            legend=STD_LEGEND,
+            legend=get_legend("Confirm Reset"),
         )
         if confirm != 1:
             return
@@ -3064,14 +3012,6 @@ async def _sensor_ids_menu(state: RuntimeState) -> None:
     async def rows() -> list[str]:
         return _sensor_id_rows()
 
-    # Custom legend for sensor IDs: Enter=Select, Next=Reset, Cancel=Back
-    sensor_ids_legend = (
-        SCROLL_KEYS,
-        (cap_for(ENTER), _t("select", "انتخاب")),
-        (cap_for(NEXT), _t("reset", "بازنشانی")),
-        (cap_for(CANCEL), _t("back", "بازگشت")),
-    )
-
     top = 0
     while True:
         items = await rows() or [_t("Nothing to see yet.", "هیچ موردی برای نمایش وجود ندارد.")]
@@ -3081,7 +3021,7 @@ async def _sensor_ids_menu(state: RuntimeState) -> None:
 
         await _flush_page(state)
 
-        view.frame("Thermal sensor IDs", legend=sensor_ids_legend)
+        view.frame("Thermal sensor IDs", legend=get_legend("Sensor IDs"))
 
         for slot in range(BODY_ROWS):
             position = top + slot
@@ -3555,7 +3495,7 @@ async def _run_status_display(state: RuntimeState, view: Screen) -> None:
             await view.splash(
                 "Status",
                 window,
-                legend=STD_LEGEND,
+                legend=get_legend("Default Splash"),
             )
         except Exception as exc:
             await state.log(
@@ -3897,7 +3837,7 @@ async def _run_menu_loop(state: RuntimeState, device) -> None:
                 MAIN_ITEMS,
                 MENU,
                 hide_back=False,
-                legend=ROOT_LEGEND,
+                legend=get_legend("Main Menu"),
             )
 
             if state.shutdown.is_set():

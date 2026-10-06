@@ -60,6 +60,7 @@ from keypad_layout import (
     LineEditor,
     cap_for,
 )
+from legend_content import get_legend
 
 # -- geometry ---------------------------------------------------------------
 
@@ -732,17 +733,40 @@ class Screen:
 
         Always drawn, and drawn last, so there is no screen an operator can
         reach without being told the way out of it.
+
+        Legend format from legend_content.py: (key_cap, (english, persian))
+        Special: SCROLL_KEYS ("\x01scroll", "") for scroll indicator
         """
         canvas = self.canvas
         canvas.fill_rect(0, LEGEND_TOP, WIDTH, LEGEND_HEIGHT, True)
         if not entries:
             return
 
+        is_persian = language.is_persian()
+
+        def _label(label: str) -> str:
+            if not is_persian:
+                return label
+            return FA_LABELS.get(label, label)
+
+        def _entry_width(entry: tuple) -> int:
+            if entry == SCROLL_KEYS:
+                return _SCROLL_WIDTH
+            key_cap = entry[0]
+            # New format: (key_cap, (english, persian))
+            if len(entry) >= 2 and isinstance(entry[1], tuple):
+                en, fa = entry[1]
+                label = fa if is_persian else en
+            else:
+                # Old format: (key_cap, label) - label is English, needs translation
+                label = entry[1] if len(entry) >= 2 else ""
+                label = _label(label)
+            return text_width(f"{key_cap} {label}" if label else key_cap)
+
         room = WIDTH - TEXT_X * 2
         content = sum(_entry_width(entry) for entry in entries)
 
-        # Widest spacing that still fits, then the caps on their own. A strip
-        # that has been cut in half says less than nothing.
+        # Widest spacing that still fits, then the caps on their own
         for gap in (18, 12, 6):
             if content + gap * (len(entries) - 1) <= room:
                 break
@@ -768,8 +792,16 @@ class Screen:
                 canvas.triangle_down(x, y + 3, on=False)
                 x += 6
                 continue
-            cap, label = entry
-            x = canvas.text(x, y, f"{cap} {_label(label)}" if label else cap, on=False)
+            key_cap = entry[0]
+            # New format: (key_cap, (english, persian))
+            if len(entry) >= 2 and isinstance(entry[1], tuple):
+                en, fa = entry[1]
+                label = fa if is_persian else en
+            else:
+                # Old format: (key_cap, label) - label is English, needs translation
+                label = entry[1] if len(entry) >= 2 else ""
+                label = _label(label)
+            x = canvas.text(x, y, f"{key_cap} {label}" if label else key_cap, on=False)
 
     def _scrollbar(self, top: int, visible: int, total: int) -> None:
         """A thumb on the right edge showing which slice of a list is shown."""
@@ -817,7 +849,7 @@ class Screen:
 
         index = max(0, min(index, total - 1))
         top = 0
-        strip = scroll_legend() if legend is None else legend
+        strip = get_legend("Default Select") if legend is None else legend
 
         while True:
             # Keep the selection on screen, moving the window as little as it
@@ -879,13 +911,9 @@ class Screen:
         while True:
             at_end = top >= limit
             if total > BODY_ROWS:
-                strip = (
-                    SCROLL_KEYS,
-                    (cap_for(ENTER), _label("Done" if at_end else "More")),
-                    (cap_for(CANCEL), "Back"),
-                )
+                strip = get_legend("Default Page")
             else:
-                strip = ((cap_for(ENTER), _label("Done")), (cap_for(CANCEL), _label("Back")))
+                strip = get_legend("Default Page")
 
             self.frame(title, legend=strip)
 
@@ -936,11 +964,7 @@ class Screen:
         should appear without a keypress.
         """
         top = 0
-        strip = (
-            SCROLL_KEYS,
-            (cap_for(ENTER), _label("Done")),
-            (cap_for(CANCEL), _label("Back")),
-        ) if legend is None else legend
+        strip = get_legend("Default Page") if legend is None else legend
 
         while True:
             items = rows() or ["Nothing to see yet."]
@@ -997,12 +1021,7 @@ class Screen:
         an operator whether a press registered.
         """
         editor = LineEditor()
-        strip = (
-            (cap_for(ENTER), "OK"),
-            (cap_for(NEXT), "Next"),
-            (cap_for(DEL), "Del"),
-            (cap_for(CANCEL), "Back"),
-        )
+        strip = get_legend("Default Read Line")
 
         # The question is at the end of a prompt, so when one is too long to
         # fit it is the opening that gets dropped, not the ask.
@@ -1043,7 +1062,8 @@ class Screen:
         those need translating where they are built, not here, because only the
         code that knows what a number means can say it in Persian.
         """
-        self.frame(title, legend=legend)
+        strip = get_legend("Default Splash") if not legend else legend
+        self.frame(title, legend=strip)
         for slot, line in enumerate(lines[:BODY_ROWS]):
             self._row(
                 self._body_row(slot) + TEXT_OFFSET,
@@ -1076,7 +1096,7 @@ class Screen:
         selected = [False] * total
         index = max(0, min(index, total - 1))
         top = 0
-        strip = scroll_legend() if legend is None else legend
+        strip = get_legend("Default Checkboxes") if legend is None else legend
 
         while True:
             # Keep the selection on screen
@@ -1149,7 +1169,7 @@ class Screen:
 
         index = max(0, min(index, total - 1))
         top = 0
-        strip = scroll_legend() if legend is None else legend
+        strip = get_legend("Default List") if legend is None else legend
 
         while True:
             if index < top:
