@@ -532,6 +532,11 @@ class RuntimeState:
         async with self._data_lock:
             return any(value > 2000 for value in self._last_gas.values())
 
+    def has_gas_warning_sync(self) -> bool:
+        """Synchronous version for the display (no await needed)."""
+        # Use a simple check without lock - race condition is harmless here
+        return any(value > 2000 for value in self._last_gas.values())
+
     async def get_read_interval(self) -> float:
         return self.read_interval
 
