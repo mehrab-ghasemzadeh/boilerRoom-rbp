@@ -3073,7 +3073,7 @@ async def _sensor_ids_menu(state: RuntimeState) -> None:
     # Custom legend with Reset option (NEXT key = key "6")
     legend = (
         SCROLL_KEYS,
-        (cap_for(NEXT), _t("Reset order", "بازنشانی ترتیب")),
+        (cap_for(NEXT), _t("Reset", "بازنشانی")),
         (cap_for(CANCEL), _t("Back", "بازگشت")),
     )
 
