@@ -50,7 +50,7 @@ from auth import (
     set_credentials,
     token_manager,
 )
-from config import GAS_SENSORS, RELAYS, TEMPERATURE_SENSORS, UNITS
+from config import GAS_SENSORS, ONE_WIRE_PATH, RELAYS, TEMPERATURE_SENSORS, UNITS
 from config_editor import (
     LIMIT_FIELDS,
     ConfigEditError,
@@ -69,7 +69,7 @@ from setpoint_store import (
 from device_config import ConfigError, config_store, describe as describe_config
 from display_font import DEGREE
 from display_canvas import text_width, truncate, wrap
-from keypad_layout import CANCEL, ENTER, NEXT, cap_for
+from keypad_layout import CANCEL, ENTER, NEXT, SCROLL_DOWN, SCROLL_UP, cap_for
 from logging_setup import get_logger
 import language
 from anti_freeze import (
@@ -80,7 +80,7 @@ from anti_freeze import choices as antifreeze_choices
 from mapping_provider import DEFAULT_MAPPING_PATH
 from limits_guard import limit_guard
 from runtime_state import RuntimeState
-from screen import BODY_COLUMNS, SCROLL_KEYS, Screen
+from screen import BODY_COLUMNS, BODY_ROWS, SCROLL_KEYS, Screen, TEXT_OFFSET, _translate_line
 from schedule_editor import (
     ScheduleEditError,
     add_exception,
@@ -101,6 +101,7 @@ from schedule_runner import (
     relay_for_target,
     schedule_runner,
 )
+from sensor_watcher import sensor_watcher
 
 # relay role -> schedule target type, the reverse of schedule_runner's map
 ROLE_TARGET = {role: kind for kind, role in TARGET_ROLE.items()}
@@ -165,6 +166,7 @@ MENU = """
   9) Show status
  10) Change language
  11) Anti-freeze temperatures
+ 12) Thermal sensor IDs
   0) Quit
 > """
 
@@ -215,6 +217,7 @@ MAIN_ITEMS = (
     ("9", "Status"),
     ("10", "Change language"),
     ("11", "Anti-freeze"),
+    ("12", "Thermal sensor IDs"),
     ("0", "Quit"),
 )
 
@@ -285,6 +288,7 @@ FA_MAIN_ITEMS = (
     ("9", "وضعیت"),
     ("10", "زبان"),
     ("11", "ضدیخ"),
+    ("12", "آیدی سنسور های دما"),
     ("0", "خروج"),
 )
 
@@ -624,12 +628,12 @@ async def _relay_menu(state: RuntimeState) -> None:
             rows.append(f"{cfg['name']:<16} {state_str}{cut}")
         return rows
 
-    # Legend for the relay table
-    legend = (
+    # Legend for the relay table: both Enter and Next toggle the relay
+    relay_legend = (
         SCROLL_KEYS,
-        (cap_for(ENTER), "Toggle"),
-        (cap_for(NEXT), "Toggle"),
-        (cap_for(CANCEL), "Back"),
+        (cap_for(ENTER), _t("toggle", "تغییر")),
+        (cap_for(NEXT), _t("toggle", "تغییر")),
+        (cap_for(CANCEL), _t("back", "بازگشت")),
     )
 
     index = 0
@@ -639,7 +643,7 @@ async def _relay_menu(state: RuntimeState) -> None:
             "Relay control",
             rows,
             index=index,
-            legend=legend,
+            legend=relay_legend,
         )
         if chosen is None:
             return
@@ -875,12 +879,12 @@ async def _mode_menu(state: RuntimeState) -> None:
             rows.append(f"{str(target):<12} {mode:<10} {relay_state}{cut}")
         return rows
 
-    # Legend for the mode table
-    legend = (
+    # Legend for the mode table: both Enter and Next change the mode
+    mode_legend = (
         SCROLL_KEYS,
-        (cap_for(ENTER), "Change"),
-        (cap_for(NEXT), "Change"),
-        (cap_for(CANCEL), "Back"),
+        (cap_for(ENTER), _t("change", "تغییر")),
+        (cap_for(NEXT), _t("change", "تغییر")),
+        (cap_for(CANCEL), _t("back", "بازگشت")),
     )
 
     index = 0
@@ -890,7 +894,7 @@ async def _mode_menu(state: RuntimeState) -> None:
             "Unit modes",
             rows,
             index=index,
-            legend=legend,
+            legend=mode_legend,
         )
         if chosen is None:
             return
@@ -912,9 +916,9 @@ async def _mode_menu(state: RuntimeState) -> None:
             index=mode_index,
             legend=(
                 SCROLL_KEYS,
-                (cap_for(ENTER), "Select"),
-                (cap_for(NEXT), "Select"),
-                (cap_for(CANCEL), "Cancel"),
+                (cap_for(ENTER), _t("select", "انتخاب")),
+                (cap_for(NEXT), _t("next", "بعدی")),
+                (cap_for(CANCEL), _t("cancel", "لغو")),
             ),
         )
 
@@ -1387,14 +1391,7 @@ async def _select_targets_table(state: RuntimeState, view: Screen) -> list[Targe
         return None
 
     items = [f"{str(target):<12} relay {relay_for_target(target)}" for target in targets]
-    legend = (
-        SCROLL_KEYS,
-        (cap_for(ENTER), "Toggle"),
-        (cap_for(NEXT), "Next"),
-        (cap_for(CANCEL), "Cancel"),
-    )
-
-    selected, _ = await view.select_checkboxes("Select targets", items, legend=legend)
+    selected, _ = await view.select_checkboxes("Select targets", items, legend=STD_LEGEND)
     if selected is None:
         return None
 
@@ -1411,14 +1408,7 @@ async def _select_days_table(state: RuntimeState, view: Screen) -> list[str] | N
     day_names = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
     day_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     items = day_labels
-    legend = (
-        SCROLL_KEYS,
-        (cap_for(ENTER), "Toggle"),
-        (cap_for(NEXT), "Next"),
-        (cap_for(CANCEL), "Cancel"),
-    )
-
-    selected, _ = await view.select_checkboxes("Select days", items, legend=legend)
+    selected, _ = await view.select_checkboxes("Select days", items, legend=STD_LEGEND)
     if selected is None:
         return None
 
@@ -1444,14 +1434,12 @@ async def _select_time_component(
         value_list = values
 
     items = [f"{v:02d}" for v in value_list]
-    legend = (
+    index = await view.select_list(title, items, legend=(
         SCROLL_KEYS,
-        (cap_for(ENTER), "Select"),
-        (cap_for(NEXT), "Select"),
-        (cap_for(CANCEL), "Cancel"),
-    )
-
-    index = await view.select_list(title, items, legend=legend)
+        (cap_for(ENTER), _t("select", "انتخاب")),
+        (cap_for(NEXT), _t("next", "بعدی")),
+        (cap_for(CANCEL), _t("cancel", "لغو")),
+    ))
     if index is None:
         return None
     return value_list[index]
@@ -1460,14 +1448,12 @@ async def _select_time_component(
 async def _select_on_off(state: RuntimeState, view: Screen) -> bool | None:
     """Select ON or OFF state."""
     items = ["ON", "OFF"]
-    legend = (
+    index = await view.select_list("Switch state", items, legend=(
         SCROLL_KEYS,
-        (cap_for(ENTER), "Select"),
-        (cap_for(NEXT), "Select"),
-        (cap_for(CANCEL), "Cancel"),
-    )
-
-    index = await view.select_list("Switch state", items, legend=legend)
+        (cap_for(ENTER), _t("select", "انتخاب")),
+        (cap_for(NEXT), _t("next", "بعدی")),
+        (cap_for(CANCEL), _t("cancel", "لغو")),
+    ))
     if index is None:
         return None
     return index == 0
@@ -1521,11 +1507,12 @@ async def _remove_weekly_rule_v2(state: RuntimeState) -> None:
     rules = schedule.weekly_rules
     index = 0
 
-    legend = (
+    # Custom legend for delete weekly rule: Enter=Select, Next=Del, Cancel=Back
+    del_rule_legend = (
         SCROLL_KEYS,
-        (cap_for(ENTER), "View"),
-        (cap_for(NEXT), "Delete"),
-        (cap_for(CANCEL), "Back"),
+        (cap_for(ENTER), _t("select", "انتخاب")),
+        (cap_for(NEXT), _t("del", "حذف")),
+        (cap_for(CANCEL), _t("back", "بازگشت")),
     )
 
     while not state.shutdown.is_set():
@@ -1539,7 +1526,7 @@ async def _remove_weekly_rule_v2(state: RuntimeState) -> None:
                 f"-> {_on_off(rule.state)} [{targets}]"
             )
 
-        chosen = await view.select("Delete weekly rule", rows, index=index, legend=legend)
+        chosen = await view.select("Delete weekly rule", rows, index=index, legend=del_rule_legend)
         if chosen is None:
             return
 
@@ -1568,9 +1555,9 @@ async def _remove_weekly_rule_v2(state: RuntimeState) -> None:
             index=0,
             legend=(
                 SCROLL_KEYS,
-                (cap_for(ENTER), "Select"),
-                (cap_for(NEXT), "Select"),
-                (cap_for(CANCEL), "Back"),
+                (cap_for(ENTER), _t("Select", "انتخاب")),
+                (cap_for(NEXT), ""),
+                (cap_for(CANCEL), _t("Back", "بازگشت")),
             ),
         )
 
@@ -1590,9 +1577,9 @@ async def _remove_weekly_rule_v2(state: RuntimeState) -> None:
                 index=0,
                 legend=(
                     SCROLL_KEYS,
-                    (cap_for(ENTER), "Select"),
-                    (cap_for(NEXT), "Select"),
-                    (cap_for(CANCEL), "Back"),
+                    (cap_for(ENTER), _t("Select", "انتخاب")),
+                    (cap_for(NEXT), ""),
+                    (cap_for(CANCEL), _t("Back", "بازگشت")),
                 ),
             )
 
@@ -1873,6 +1860,14 @@ async def _remove_exception_v2(state: RuntimeState) -> None:
     exceptions = schedule.exceptions
     index = 0
 
+    # Custom legend for delete exception: Enter=Select, Next=Del, Cancel=Back
+    del_exc_legend = (
+        SCROLL_KEYS,
+        (cap_for(ENTER), _t("select", "انتخاب")),
+        (cap_for(NEXT), _t("del", "حذف")),
+        (cap_for(CANCEL), _t("back", "بازگشت")),
+    )
+
     while not state.shutdown.is_set():
         # Build display rows
         rows = []
@@ -1888,12 +1883,7 @@ async def _remove_exception_v2(state: RuntimeState) -> None:
                 f"{'ON' if exc.state else 'OFF'} [{targets}]"
             )
 
-        chosen = await view.select("Delete exception", rows, index=index, legend=(
-            SCROLL_KEYS,
-            (cap_for(ENTER), "View"),
-            (cap_for(NEXT), "Delete"),
-            (cap_for(CANCEL), "Back"),
-        ))
+        chosen = await view.select("Delete exception", rows, index=index, legend=del_exc_legend)
         if chosen is None:
             return
 
@@ -1920,12 +1910,7 @@ async def _remove_exception_v2(state: RuntimeState) -> None:
             f"Exception {index + 1}",
             ["View details", "Delete this exception", "Back to list"],
             index=0,
-            legend=(
-                SCROLL_KEYS,
-                (cap_for(ENTER), "Select"),
-                (cap_for(NEXT), "Select"),
-                (cap_for(CANCEL), "Back"),
-            ),
+            legend=STD_LEGEND,
         )
 
         if action is None:
@@ -1942,12 +1927,7 @@ async def _remove_exception_v2(state: RuntimeState) -> None:
                 "Confirm delete",
                 ["No, keep it", "Yes, delete it"],
                 index=0,
-                legend=(
-                    SCROLL_KEYS,
-                    (cap_for(ENTER), "Select"),
-                    (cap_for(NEXT), "Select"),
-                    (cap_for(CANCEL), "Back"),
-                ),
+                legend=STD_LEGEND,
             )
 
             if confirm == 1:
@@ -2029,13 +2009,6 @@ async def _schedule_editor_menu(state: RuntimeState) -> None:
         await _schedule_editor_menu_terminal(state)
         return
 
-    legend = (
-        SCROLL_KEYS,
-        (cap_for(ENTER), "Select"),
-        (cap_for(NEXT), "Select"),
-        (cap_for(CANCEL), "Back"),
-    )
-
     index = 0
     while not state.shutdown.is_set():
         chosen = await view.select(
@@ -2047,7 +2020,7 @@ async def _schedule_editor_menu(state: RuntimeState) -> None:
                 "Remove exception",
             ],
             index=index,
-            legend=legend,
+            legend=STD_LEGEND,
         )
         if chosen is None:
             return
@@ -2168,14 +2141,26 @@ DEVICE_LIMIT_ROW = "Device-wide limit"
 # has to be short enough that the unit's own number survives the row.
 DEVICE_LIMIT_SHORT = "none"
 
+# Standard legend used by most menus: 2/8 scroll, 5 select, 6 next, 4 back
+# The SCROLL_KEYS constant handles 2/8 arrows automatically
+STD_LEGEND = (
+    SCROLL_KEYS,
+    (cap_for(ENTER), _t("select", "انتخاب")),
+    (cap_for(NEXT), _t("next", "بعدی")),
+    (cap_for(CANCEL), _t("back", "بازگشت")),
+)
+
+# Main menu: Enter selects, Cancel shows Status
+ROOT_LEGEND = (
+    SCROLL_KEYS,
+    (cap_for(ENTER), _t("select", "انتخاب")),
+    (cap_for(NEXT), ""),
+    (cap_for(CANCEL), _t("status", "وضعیت")),
+)
+
 # Both of these screens choose something, so both say the same three things:
 # move, choose, go back. The accept key and the next key are the same key here.
-_SET_LEGEND = (
-    SCROLL_KEYS,
-    (cap_for(ENTER), "Set"),
-    (cap_for(NEXT), "Set"),
-    (cap_for(CANCEL), "Back"),
-)
+_SET_LEGEND = STD_LEGEND
 
 
 def _unit_label(target: Target) -> str:
@@ -2977,6 +2962,222 @@ async def _announce_antifreeze(state: RuntimeState, summary: str) -> None:
     await push_device_state(state)
 
 
+def _sensor_id_rows() -> list[str]:
+    """
+    The panel's sensor-ID list, in whatever state the bus is in.
+
+    One live list rather than a decision made once on the way in, because the
+    bus does not hold still: it can be empty at boot, come up a second later, or
+    lose a probe while this screen is open. Every one of those states is a row
+    here, so the screen is right at every moment instead of only at the moment
+    it was opened — which is what "watching" has to mean if it is going to be
+    worth anything at the panel.
+    """
+    bus = sensor_watcher.bus_available
+
+    if bus is False:
+        return [
+            _t(f"No 1-Wire bus at {ONE_WIRE_PATH}", f"گذرگاه 1-Wire در {ONE_WIRE_PATH} نیست"),
+            _t(
+                "Thermal sensors cannot be watched.",
+                "سنسورهای دما قابل پایش نیستند.",
+            ),
+        ]
+
+    if bus is None:
+        # Asked for before the first scan has run, which is the first second of
+        # the agent's life. Said rather than shown blank, because a blank panel
+        # and a panel saying "nothing here" look the same and mean opposite
+        # things.
+        return [_t("Checking the 1-Wire bus ...", "در حال بررسی گذرگاه 1-Wire ...")]
+
+    rows = sensor_watcher.rows()
+    if not rows:
+        return [
+            _t(
+                "No thermal sensors on the bus yet.",
+                "هنوز سنسور دمایی روی گذرگاه نیست.",
+            ),
+            _t(
+                "This list fills in as probes are fitted.",
+                "این فهرست با وصل شدن سنسورها پر می‌شود.",
+            ),
+        ]
+
+    return rows
+
+
+async def _reset_sensor_cache(state: RuntimeState) -> None:
+    """
+    Reset the sensor connection order cache with confirmation.
+
+    Deletes the persisted cache file and clears the in-memory sensor history,
+    so the next probes fitted will be numbered from 1 again.
+    """
+    view = screen()
+    if view is not None:
+        # Panel: use select with Yes/No options
+        confirm = await view.select(
+            _t("Reset sensor order?", "ترتیب سنسورها بازنشانی شود؟"),
+            [_t("No", "خیر"), _t("Yes", "بله")],
+            index=0,
+            legend=STD_LEGEND,
+        )
+        if confirm != 1:
+            return
+    else:
+        # Terminal: text prompt
+        answer = await _prompt(
+            _t(
+                "\n  Reset sensor connection order? This deletes the cache and "
+                "renumbers probes from 1. [y/n]: ",
+                "\n  ترتیب اتصال سنسورها بازنشانی شود؟ این کار حافظه نهان را حذف "
+                "و سنسورها را از ۱ شماره‌گذاری می‌کند. [ب/خ]: ",
+            )
+        )
+        if not _is_yes(answer):
+            await state.echo(_t("[menu] Cancelled.\n", "[menu] لغو شد.\n"))
+            return
+
+    sensor_watcher.reset()
+    await state.log("[menu] Operator reset the sensor connection order cache", level=logging.WARNING)
+    await state.echo(_t("\n[menu] Sensor connection order reset.\n", "\n[menu] ترتیب اتصال سنسورها بازنشانی شد.\n"))
+
+
+async def _sensor_ids_menu(state: RuntimeState) -> None:
+    """
+    Every thermal sensor the bus has ever seen, in the order it was connected.
+
+    The watcher task keeps the order; this is the view of it. On
+    the panel it is a live list — a probe fitted while the screen
+    is open appears without a keypress, which is the point of
+    watching. A probe that is pulled out is not deleted from the
+    list: it keeps its number, marked with a ``~``, because "which probe
+    was the second one I fitted" is the thing an installer is here for and
+    renumbering the list would lose it.
+    """
+    view = screen()
+    if view is None:
+        await _sensor_ids_menu_terminal(state)
+        return
+
+    async def rows() -> list[str]:
+        return _sensor_id_rows()
+
+    # Custom legend for sensor IDs: Enter=Select, Next=Reset, Cancel=Back
+    sensor_ids_legend = (
+        SCROLL_KEYS,
+        (cap_for(ENTER), _t("select", "انتخاب")),
+        (cap_for(NEXT), _t("reset", "بازنشانی")),
+        (cap_for(CANCEL), _t("back", "بازگشت")),
+    )
+
+    top = 0
+    while True:
+        items = await rows() or [_t("Nothing to see yet.", "هیچ موردی برای نمایش وجود ندارد.")]
+        total = len(items)
+        limit = max(0, total - BODY_ROWS)
+        top = min(top, limit)
+
+        await _flush_page(state)
+
+        view.frame("Thermal sensor IDs", legend=sensor_ids_legend)
+
+        for slot in range(BODY_ROWS):
+            position = top + slot
+            if position >= total:
+                break
+            view._row(
+                view._body_row(slot) + TEXT_OFFSET,
+                _translate_line(items[position]),
+            )
+
+        view._scrollbar(top, BODY_ROWS, total)
+        await view.render()
+
+        try:
+            key = await asyncio.wait_for(view._key(), timeout=sensor_watcher.interval)
+        except asyncio.TimeoutError:
+            continue
+
+        if key == SCROLL_UP:
+            top = max(0, top - 1)
+        elif key == SCROLL_DOWN:
+            top = min(limit, top + 1)
+        elif key == NEXT:
+            # Reset sensor cache with confirmation
+            await _reset_sensor_cache(state)
+            # After reset, continue the loop with fresh data
+            top = 0  # Reset scroll position after cache reset
+            continue
+        else:
+            return
+
+
+async def _sensor_ids_menu_terminal(state: RuntimeState) -> None:
+    """
+    The terminal's face of the watcher: the same list, refreshed on a timer.
+
+    One reader is held open for the whole visit — whatever is typed
+    ends the screen, and a second reader would race it for the
+    keyboard. The list is reprinted every interval until then.
+    """
+    interval = sensor_watcher.interval
+    reader = asyncio.create_task(
+        input_device().read_line(
+            _t(
+                "  Enter to leave, 'r' to reset order (the list refreshes until then) ...\n",
+                "  برای خروج Enter، برای بازنشانی 'r' (فهرست تا زمانی که بمانید تازه می‌شود) ...\n",
+            )
+        )
+    )
+    stopping = asyncio.create_task(state.shutdown.wait())
+    try:
+        while not state.shutdown.is_set():
+            _set_context("Thermal sensor IDs")
+            for line in sensor_watcher.describe():
+                await state.echo(line)
+            await _flush_page(state)
+
+            done, _ = await asyncio.wait(
+                {reader, stopping},
+                timeout=interval,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if reader in done:
+                try:
+                    answer = await reader
+                except EOFError:
+                    raise
+                except Exception as exc:
+                    await state.log(
+                        f"[menu] Thermal sensor IDs: input failed "
+                        f"({type(exc).__name__}: {exc}) — leaving the screen",
+                        level=logging.WARNING,
+                    )
+                    return
+
+                answer = answer.strip().lower()
+                if answer in ("r", "reset"):
+                    await _reset_sensor_cache(state)
+                    # Re-create the reader for the next cycle
+                    reader = asyncio.create_task(
+                        input_device().read_line(
+                            _t(
+                                "  Enter to leave, 'r' to reset order (the list refreshes until then) ...\n",
+                                "  برای خروج Enter، برای بازنشانی 'r' (فهرست تا زمانی که بمانید تازه می‌شود) ...\n",
+                            )
+                        )
+                    )
+                    continue
+
+                return
+    finally:
+        for task in (reader, stopping):
+            if not task.done():
+                task.cancel()
+
+
 async def _handle_choice(state: RuntimeState, choice: str) -> None:
     if choice == "1":
         await _show_last_readings(state)
@@ -3000,6 +3201,8 @@ async def _handle_choice(state: RuntimeState, choice: str) -> None:
         await _language_menu(state)
     elif choice == "11":
         await _antifreeze_menu(state)
+    elif choice == "12":
+        await _sensor_ids_menu(state)
     elif choice == "0":
         await state.echo("\n[menu] Shutting down ...")
         state.shutdown.set()
@@ -3077,10 +3280,6 @@ async def _start_input_device(state: RuntimeState):
 # The graphical display
 # ---------------------------------------------------------------------------
 
-
-# On the main menu there is nothing to go back to, so the back key is given the
-# screen an operator standing at the boiler wants most.
-ROOT_LEGEND = (SCROLL_KEYS, (cap_for(ENTER), "Open"), (cap_for(CANCEL), "Status"))
 
 # How often the status screen redraws itself when there is no keypad to ask for
 # it. Matched to the sensor cadence: anything faster redraws the same numbers.
@@ -3356,7 +3555,7 @@ async def _run_status_display(state: RuntimeState, view: Screen) -> None:
             await view.splash(
                 "Status",
                 window,
-                legend=((cap_for(ENTER), "no keypad fitted"),),
+                legend=STD_LEGEND,
             )
         except Exception as exc:
             await state.log(
@@ -3671,6 +3870,11 @@ async def _run_menu_loop(state: RuntimeState, device) -> None:
         # reading while the operator looks at six blank rows.
         state.capture_echo()
 
+    # How many screens have failed this visit, for the log line that says so on
+    # the way out. A single failure is worth nothing; a screen that fails every
+    # time it is opened is worth saying out loud.
+    _faults = 0
+
     while not state.shutdown.is_set():
         # One handler for the whole step, because every screen below reads
         # keys and any of them can find the input device gone — stdin closed,
@@ -3714,3 +3918,42 @@ async def _run_menu_loop(state: RuntimeState, device) -> None:
         except EOFError:
             state.shutdown.set()
             break
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # A screen that could not do its job — a sensor list built from
+            # something that has just been removed, a mapping that changed
+            # mid-edit, hardware that stopped answering. The menu is the one
+            # place an operator goes when something is wrong, so ending the
+            # whole agent over one bad screen is the wrong trade: say what
+            # happened, put it in the log where it can be found, and go back to
+            # the main menu so the next thing can still be tried.
+            await state.log(
+                f"[menu] {_context} failed: {type(exc).__name__}: {exc}",
+                level=logging.ERROR,
+            )
+            try:
+                await _notice(
+                    state,
+                    "Menu error",
+                    [
+                        _t("This screen could not be shown.", "این صفحه نمایش داده نشد."),
+                        "",
+                        f"{type(exc).__name__}: {exc}",
+                        "",
+                        _t("Back at the main menu.", "به منوی اصلی برگشتید."),
+                    ],
+                )
+            except Exception:
+                # Even the notice failed — the display or the input device is
+                # gone. Nothing left to say it on, and no reason to spin.
+                pass
+            _set_context("Menu")
+            _faults += 1
+
+    if _faults:
+        await state.log(
+            f"[menu] {('panel' if view is not None else 'terminal')} menu closed "
+            f"after {_faults} screen failure(s)",
+            level=logging.WARNING,
+        )

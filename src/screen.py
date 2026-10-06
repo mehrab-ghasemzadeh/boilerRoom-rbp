@@ -34,7 +34,9 @@ menu builds them.
 
 from __future__ import annotations
 
+import asyncio
 import datetime
+from collections.abc import Callable
 
 from text_shaper import has_rtl
 
@@ -149,6 +151,7 @@ FA_TITLES = {
     # "Sensor readings": "داده های سنسور ها",
     "App configuration": "پیکربندی برنامه",
     "Device mapping": "نگاشت دستگاه",
+    "Thermal sensor IDs": "آیدی سنسورها",
     "Error": "خطا",
     "Done": "انجام شد",
     "No change": "بدون تغییر",
@@ -201,6 +204,7 @@ FA_LINES = {
     "Unit modes:": "حالت واحدها:",
     "Targets:": "هدف‌ها:",
     "No readings yet.": "هنوز خوانشی نیست.",
+    "Nothing to see yet.": "هنوز چیزی دیده نشده است.",
     "No boilers in the device mapping.": "دیگی در نگاشت دستگاه نیست.",
     "No boiler has its own temperature set.": "برای هیچ دیگی دمای مستقل تعیین نشده است.",
     "Relay controller not available.": "کنترلر رله در دسترس نیست.",
@@ -912,6 +916,66 @@ class Screen:
 
     async def message(self, title: str, lines: list[str]) -> None:
         await self.page(title, lines)
+
+    async def watch(
+        self,
+        title: str,
+        rows: Callable[[], list[str]],
+        *,
+        interval: float,
+        legend: tuple[tuple[str, str], ...] | None = None,
+    ) -> None:
+        """
+        Show a list that refreshes on its own.
+
+        The same keys as a page: the scroll keys move a row at a
+        time, and accept or back leaves. The list is re-read every
+        ``interval`` seconds whether or not anything was pressed,
+        because what it shows changes while nobody is looking at
+        it — a probe fitted while the operator is watching for it
+        should appear without a keypress.
+        """
+        top = 0
+        strip = (
+            SCROLL_KEYS,
+            (cap_for(ENTER), _label("Done")),
+            (cap_for(CANCEL), _label("Back")),
+        ) if legend is None else legend
+
+        while True:
+            items = rows() or ["Nothing to see yet."]
+            total = len(items)
+            limit = max(0, total - BODY_ROWS)
+            top = min(top, limit)
+
+            self.frame(title, legend=strip)
+
+            for slot in range(BODY_ROWS):
+                position = top + slot
+                if position >= total:
+                    break
+                self._row(
+                    self._body_row(slot) + TEXT_OFFSET,
+                    _translate_line(items[position]),
+                )
+
+            self._scrollbar(top, BODY_ROWS, total)
+            await self.render()
+
+            try:
+                # The key wait doubles as the refresh timer: a
+                # press is handled at once, and silence redraws
+                # with whatever the list says now.
+                key = await asyncio.wait_for(self._key(), timeout=interval)
+            except asyncio.TimeoutError:
+                continue
+
+            if key == SCROLL_UP:
+                top = max(0, top - 1)
+            elif key == SCROLL_DOWN:
+                top = min(limit, top + 1)
+            else:
+                return
 
     async def read_line(
         self,
