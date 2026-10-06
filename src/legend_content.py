@@ -74,7 +74,7 @@ LEGENDS = {
 
     # Relay control
     "Relay Control": RELAY_LEGEND,
-    "Relay Confirmation": (
+    "Relay Confirmation": (SCROLL_LEGEND,)+(
         (cap_for(ENTER), _t("confirm", "تایید")),
         (cap_for(CANCEL), _t("cancel", "انصراف")),
     ),
@@ -88,7 +88,7 @@ LEGENDS = {
 
     # Unit modes
     "Unit Modes": SCROLL_LEGEND,
-    "Mode Options": (
+    "Mode Options": (SCROLL_LEGEND,)+(
         (cap_for(ENTER), _t("select", "انتخاب")),
         (cap_for(CANCEL), _t("back", "بازگشت")),
     ),
@@ -136,7 +136,6 @@ LEGENDS = {
     "Antifreeze": SCROLL_LEGEND,
     "Edit Antifreeze": (
         (cap_for(ENTER), _t("save", "ذخیره")),
-        (cap_for(NEXT), _t("next", "بعدی")),
         (cap_for(CANCEL), _t("cancel", "انصراف")),
     ),
 
