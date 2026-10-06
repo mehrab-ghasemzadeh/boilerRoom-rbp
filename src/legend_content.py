@@ -11,16 +11,18 @@ Keys map to keypad actions:
 Each legend is a list of tuples: (key_cap, (english, persian))
 """
 
-from keypad_layout import cap_for, ENTER, NEXT, CANCEL
-
-# Scroll keys - same as in screen.py
-SCROLL_KEYS = ("\x01scroll", "")
-
+from keypad_layout import cap_for, ENTER, NEXT, CANCEL, SCROLL_UP, SCROLL_DOWN
 
 def _t(en: str, fa: str) -> tuple[str, str]:
     """Translation helper returning (english, persian) tuple."""
     return (en, fa)
 
+# Scroll keys - same as in screen.py
+# SCROLL_KEYS = ("\x01scroll", "")
+SCROLL_KEYS = (
+    (cap_for(SCROLL_UP), ("▲")),
+    (cap_for(SCROLL_DOWN), ("▼")),
+)
 
 # Standard scroll legend used by most list screens
 SCROLL_LEGEND = (SCROLL_KEYS,) + (
@@ -51,6 +53,15 @@ RELAY_LEGEND = (SCROLL_KEYS,) + (
     (cap_for(CANCEL), _t("back", "بازگشت")),
 )
 
+STATIC_LEGEND = (SCROLL_KEYS,) + (
+    (cap_for(CANCEL), _t("back", "بازگشت")),
+)
+
+SENSOR_IDS_LEGEND = (SCROLL_KEYS,) + (
+    (cap_for(NEXT), _t("reset", "ریست")),
+    (cap_for(CANCEL), _t("back", "بازگشت")),
+)
+
 # Legend content dictionary - keys are English screen titles
 LEGENDS = {
     # Main menu
@@ -58,8 +69,8 @@ LEGENDS = {
 
     # Status / Read-only screens
     "Status": SCROLL_LEGEND,
-    "Last Readings": STD_LEGEND,
-    "Sensor IDs": SCROLL_LEGEND + ((cap_for(NEXT), _t("reset", "بازنشانی")),),
+    "Last Readings": STATIC_LEGEND,
+    "Sensor IDs": SENSOR_IDS_LEGEND,
     "Boiler Room Status": SCROLL_LEGEND,
     "Boiler Room Config": SCROLL_LEGEND,
     "Sensor Mapping": SCROLL_LEGEND,
