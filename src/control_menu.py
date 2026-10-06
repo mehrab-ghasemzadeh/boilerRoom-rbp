@@ -557,19 +557,23 @@ async def _show_last_readings(state: RuntimeState) -> None:
         await state.echo("\n[menu] No readings yet.\n")
         return
 
-    await state.echo(f"\n[menu] Last readings at {read_at.isoformat()} (cycle {snap['cycle_count']})")
     for sensor_id, value in sorted(snap["temperatures"].items()):
         cfg = TEMPERATURE_SENSORS.get(sensor_id, {})
         label = cfg.get("name", f"Sensor {sensor_id}")
         if value is None:
-            await state.echo(f"  [{sensor_id}] {label}: unavailable")
+            await state.echo(f"{label} : unavailable")
         else:
-            await state.echo(f"  [{sensor_id}] {label}: {value:.2f} °C")
+            await state.echo(f"{label} : {value:.2f} °C")
+
+    await state.echo("_____________________________")
 
     for sensor_id, value in sorted(snap["gas"].items()):
         cfg = GAS_SENSORS.get(sensor_id, {})
         label = cfg.get("name", f"Sensor {sensor_id}")
-        await state.echo(f"  [{sensor_id}] {label}: {value}")
+        await state.echo(f"{label} : {value}")
+
+    await state.echo("_____________________________")
+    await state.echo(f"Read at: {read_at.isoformat()}  (cycle {snap['cycle_count']})")
     await state.echo("")
 
 
