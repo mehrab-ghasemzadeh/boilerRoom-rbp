@@ -54,7 +54,7 @@ STATIC_LEGEND = (SCROLL_KEYS,) + (
 )
 
 SENSOR_IDS_LEGEND = (SCROLL_KEYS,) + (
-    (cap_for(NEXT), _t("reset", "ریست")),
+    (cap_for(NEXT), _t("reset", "بازنشانی")),
     (cap_for(CANCEL), _t("back", "بازگشت")),
 )
 
@@ -81,7 +81,7 @@ LEGENDS = {
 
     # Temperature settings
     "Temperatures": SCROLL_LEGEND,
-    "Set Temperature": (
+    "Set Temperature": (SCROLL_LEGEND,)+(
         (cap_for(ENTER), _t("save", "ذخیره")),
         (cap_for(CANCEL), _t("cancel", "انصراف")),
     ),
@@ -175,7 +175,7 @@ LEGENDS = {
         (cap_for(CANCEL), _t("back", "بازگشت")),
     ),
     "Default Checkboxes": (
-        (cap_for(ENTER), _t("toggle", "تغییر")),
+        (cap_for(ENTER), _t("toggle", "انتخاب")),
         (cap_for(NEXT), _t("next", "بعدی")),
         (cap_for(CANCEL), _t("back", "بازگشت")),
     ),
