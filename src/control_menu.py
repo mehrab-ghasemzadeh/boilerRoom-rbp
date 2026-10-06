@@ -628,12 +628,12 @@ async def _relay_menu(state: RuntimeState) -> None:
             rows.append(f"{cfg['name']:<16} {state_str}{cut}")
         return rows
 
-    # Legend for the relay table
-    legend = (
+    # Legend for the relay table: both Enter and Next toggle the relay
+    relay_legend = (
         SCROLL_KEYS,
-        (cap_for(ENTER), _t("Toggle", "تغییر")),
-        (cap_for(NEXT), _t("Toggle", "تغییر")),
-        (cap_for(CANCEL), _t("Back", "بازگشت")),
+        (cap_for(ENTER), _t("toggle", "تغییر")),
+        (cap_for(NEXT), _t("toggle", "تغییر")),
+        (cap_for(CANCEL), _t("back", "بازگشت")),
     )
 
     index = 0
@@ -643,7 +643,7 @@ async def _relay_menu(state: RuntimeState) -> None:
             "Relay control",
             rows,
             index=index,
-            legend=legend,
+            legend=relay_legend,
         )
         if chosen is None:
             return
@@ -879,12 +879,12 @@ async def _mode_menu(state: RuntimeState) -> None:
             rows.append(f"{str(target):<12} {mode:<10} {relay_state}{cut}")
         return rows
 
-    # Legend for the mode table
-    legend = (
+    # Legend for the mode table: both Enter and Next change the mode
+    mode_legend = (
         SCROLL_KEYS,
-        (cap_for(ENTER), _t("Change", "تغییر")),
-        (cap_for(NEXT), _t("Change", "تغییر")),
-        (cap_for(CANCEL), _t("Back", "بازگشت")),
+        (cap_for(ENTER), _t("change", "تغییر")),
+        (cap_for(NEXT), _t("change", "تغییر")),
+        (cap_for(CANCEL), _t("back", "بازگشت")),
     )
 
     index = 0
@@ -894,7 +894,7 @@ async def _mode_menu(state: RuntimeState) -> None:
             "Unit modes",
             rows,
             index=index,
-            legend=legend,
+            legend=mode_legend,
         )
         if chosen is None:
             return
@@ -916,9 +916,9 @@ async def _mode_menu(state: RuntimeState) -> None:
             index=mode_index,
             legend=(
                 SCROLL_KEYS,
-                (cap_for(ENTER), _t("Select", "انتخاب")),
-                (cap_for(NEXT), ""),
-                (cap_for(CANCEL), _t("Cancel", "لغو")),
+                (cap_for(ENTER), _t("select", "انتخاب")),
+                (cap_for(NEXT), _t("next", "بعدی")),
+                (cap_for(CANCEL), _t("cancel", "لغو")),
             ),
         )
 
@@ -1391,14 +1391,7 @@ async def _select_targets_table(state: RuntimeState, view: Screen) -> list[Targe
         return None
 
     items = [f"{str(target):<12} relay {relay_for_target(target)}" for target in targets]
-    legend = (
-        SCROLL_KEYS,
-        (cap_for(ENTER), _t("Toggle", "تغییر")),
-        (cap_for(NEXT), _t("Next", "بعدی")),
-        (cap_for(CANCEL), _t("Cancel", "لغو")),
-    )
-
-    selected, _ = await view.select_checkboxes("Select targets", items, legend=legend)
+    selected, _ = await view.select_checkboxes("Select targets", items, legend=STD_LEGEND)
     if selected is None:
         return None
 
@@ -1415,14 +1408,7 @@ async def _select_days_table(state: RuntimeState, view: Screen) -> list[str] | N
     day_names = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
     day_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     items = day_labels
-    legend = (
-        SCROLL_KEYS,
-        (cap_for(ENTER), _t("Toggle", "تغییر")),
-        (cap_for(NEXT), _t("Next", "بعدی")),
-        (cap_for(CANCEL), _t("Cancel", "لغو")),
-    )
-
-    selected, _ = await view.select_checkboxes("Select days", items, legend=legend)
+    selected, _ = await view.select_checkboxes("Select days", items, legend=STD_LEGEND)
     if selected is None:
         return None
 
@@ -1448,14 +1434,12 @@ async def _select_time_component(
         value_list = values
 
     items = [f"{v:02d}" for v in value_list]
-    legend = (
+    index = await view.select_list(title, items, legend=(
         SCROLL_KEYS,
-        (cap_for(ENTER), _t("Select", "انتخاب")),
-        (cap_for(NEXT), ""),
-        (cap_for(CANCEL), _t("Cancel", "لغو")),
-    )
-
-    index = await view.select_list(title, items, legend=legend)
+        (cap_for(ENTER), _t("select", "انتخاب")),
+        (cap_for(NEXT), _t("next", "بعدی")),
+        (cap_for(CANCEL), _t("cancel", "لغو")),
+    ))
     if index is None:
         return None
     return value_list[index]
@@ -1464,14 +1448,12 @@ async def _select_time_component(
 async def _select_on_off(state: RuntimeState, view: Screen) -> bool | None:
     """Select ON or OFF state."""
     items = ["ON", "OFF"]
-    legend = (
+    index = await view.select_list("Switch state", items, legend=(
         SCROLL_KEYS,
-        (cap_for(ENTER), _t("Select", "انتخاب")),
-        (cap_for(NEXT), ""),
-        (cap_for(CANCEL), _t("Cancel", "لغو")),
-    )
-
-    index = await view.select_list("Switch state", items, legend=legend)
+        (cap_for(ENTER), _t("select", "انتخاب")),
+        (cap_for(NEXT), _t("next", "بعدی")),
+        (cap_for(CANCEL), _t("cancel", "لغو")),
+    ))
     if index is None:
         return None
     return index == 0
@@ -1525,11 +1507,12 @@ async def _remove_weekly_rule_v2(state: RuntimeState) -> None:
     rules = schedule.weekly_rules
     index = 0
 
-    legend = (
+    # Custom legend for delete weekly rule: Enter=Select, Next=Del, Cancel=Back
+    del_rule_legend = (
         SCROLL_KEYS,
-        (cap_for(ENTER), _t("Select", "انتخاب")),
-        (cap_for(NEXT), _t("Del", "حذف")),
-        (cap_for(CANCEL), ""),
+        (cap_for(ENTER), _t("select", "انتخاب")),
+        (cap_for(NEXT), _t("del", "حذف")),
+        (cap_for(CANCEL), _t("back", "بازگشت")),
     )
 
     while not state.shutdown.is_set():
@@ -1543,7 +1526,7 @@ async def _remove_weekly_rule_v2(state: RuntimeState) -> None:
                 f"-> {_on_off(rule.state)} [{targets}]"
             )
 
-        chosen = await view.select("Delete weekly rule", rows, index=index, legend=legend)
+        chosen = await view.select("Delete weekly rule", rows, index=index, legend=del_rule_legend)
         if chosen is None:
             return
 
@@ -1877,6 +1860,14 @@ async def _remove_exception_v2(state: RuntimeState) -> None:
     exceptions = schedule.exceptions
     index = 0
 
+    # Custom legend for delete exception: Enter=Select, Next=Del, Cancel=Back
+    del_exc_legend = (
+        SCROLL_KEYS,
+        (cap_for(ENTER), _t("select", "انتخاب")),
+        (cap_for(NEXT), _t("del", "حذف")),
+        (cap_for(CANCEL), _t("back", "بازگشت")),
+    )
+
     while not state.shutdown.is_set():
         # Build display rows
         rows = []
@@ -1892,12 +1883,7 @@ async def _remove_exception_v2(state: RuntimeState) -> None:
                 f"{'ON' if exc.state else 'OFF'} [{targets}]"
             )
 
-        chosen = await view.select("Delete exception", rows, index=index, legend=(
-            SCROLL_KEYS,
-            (cap_for(ENTER), _t("Select", "انتخاب")),
-            (cap_for(NEXT), _t("Del", "حذف")),
-            (cap_for(CANCEL), ""),
-        ))
+        chosen = await view.select("Delete exception", rows, index=index, legend=del_exc_legend)
         if chosen is None:
             return
 
@@ -1924,12 +1910,7 @@ async def _remove_exception_v2(state: RuntimeState) -> None:
             f"Exception {index + 1}",
             ["View details", "Delete this exception", "Back to list"],
             index=0,
-            legend=(
-                SCROLL_KEYS,
-                (cap_for(ENTER), _t("Select", "انتخاب")),
-                (cap_for(NEXT), ""),
-                (cap_for(CANCEL), _t("Back", "بازگشت")),
-            ),
+            legend=STD_LEGEND,
         )
 
         if action is None:
@@ -1946,12 +1927,7 @@ async def _remove_exception_v2(state: RuntimeState) -> None:
                 "Confirm delete",
                 ["No, keep it", "Yes, delete it"],
                 index=0,
-                legend=(
-                    SCROLL_KEYS,
-                    (cap_for(ENTER), _t("Select", "انتخاب")),
-                    (cap_for(NEXT), ""),
-                    (cap_for(CANCEL), _t("Back", "بازگشت")),
-                ),
+                legend=STD_LEGEND,
             )
 
             if confirm == 1:
@@ -2033,13 +2009,6 @@ async def _schedule_editor_menu(state: RuntimeState) -> None:
         await _schedule_editor_menu_terminal(state)
         return
 
-    legend = (
-        SCROLL_KEYS,
-        (cap_for(ENTER), _t("Select", "انتخاب")),
-        (cap_for(NEXT), ""),
-        (cap_for(CANCEL), _t("Back", "بازگشت")),
-    )
-
     index = 0
     while not state.shutdown.is_set():
         chosen = await view.select(
@@ -2051,7 +2020,7 @@ async def _schedule_editor_menu(state: RuntimeState) -> None:
                 "Remove exception",
             ],
             index=index,
-            legend=legend,
+            legend=STD_LEGEND,
         )
         if chosen is None:
             return
@@ -2172,14 +2141,26 @@ DEVICE_LIMIT_ROW = "Device-wide limit"
 # has to be short enough that the unit's own number survives the row.
 DEVICE_LIMIT_SHORT = "none"
 
+# Standard legend used by most menus: 2/8 scroll, 5 select, 6 next, 4 back
+# The SCROLL_KEYS constant handles 2/8 arrows automatically
+STD_LEGEND = (
+    SCROLL_KEYS,
+    (cap_for(ENTER), _t("select", "انتخاب")),
+    (cap_for(NEXT), _t("next", "بعدی")),
+    (cap_for(CANCEL), _t("back", "بازگشت")),
+)
+
+# Main menu: Enter opens submenu, Back shows Status
+ROOT_LEGEND = (
+    SCROLL_KEYS,
+    (cap_for(ENTER), _t("open", "باز کردن")),
+    (cap_for(NEXT), _t("next", "بعدی")),
+    (cap_for(CANCEL), _t("status", "وضعیت")),
+)
+
 # Both of these screens choose something, so both say the same three things:
 # move, choose, go back. The accept key and the next key are the same key here.
-_SET_LEGEND = (
-    SCROLL_KEYS,
-    (cap_for(ENTER), _t("Select", "انتخاب")),
-    (cap_for(NEXT), ""),
-    (cap_for(CANCEL), _t("Back", "بازگشت")),
-)
+_SET_LEGEND = STD_LEGEND
 
 
 def _unit_label(target: Target) -> str:
@@ -3040,12 +3021,7 @@ async def _reset_sensor_cache(state: RuntimeState) -> None:
             _t("Reset sensor order?", "ترتیب سنسورها بازنشانی شود؟"),
             [_t("No", "خیر"), _t("Yes", "بله")],
             index=0,
-            legend=(
-                SCROLL_KEYS,
-                (cap_for(ENTER), _t("Select", "انتخاب")),
-                (cap_for(NEXT), ""),
-                (cap_for(CANCEL), _t("Back", "بازگشت")),
-            ),
+            legend=STD_LEGEND,
         )
         if confirm != 1:
             return
@@ -3088,12 +3064,12 @@ async def _sensor_ids_menu(state: RuntimeState) -> None:
     async def rows() -> list[str]:
         return _sensor_id_rows()
 
-    # Custom legend with Reset option (NEXT key = key "6")
-    legend = (
+    # Custom legend for sensor IDs: Enter=Select, Next=Reset, Cancel=Back
+    sensor_ids_legend = (
         SCROLL_KEYS,
-        (cap_for(ENTER), _t("Select", "انتخاب")),
-        (cap_for(NEXT), _t("Reset", "بازنشانی")),
-        (cap_for(CANCEL), _t("Back", "بازگشت")),
+        (cap_for(ENTER), _t("select", "انتخاب")),
+        (cap_for(NEXT), _t("reset", "بازنشانی")),
+        (cap_for(CANCEL), _t("back", "بازگشت")),
     )
 
     top = 0
@@ -3105,7 +3081,7 @@ async def _sensor_ids_menu(state: RuntimeState) -> None:
 
         await _flush_page(state)
 
-        view.frame("Thermal sensor IDs", legend=legend)
+        view.frame("Thermal sensor IDs", legend=sensor_ids_legend)
 
         for slot in range(BODY_ROWS):
             position = top + slot
@@ -3304,15 +3280,6 @@ async def _start_input_device(state: RuntimeState):
 # The graphical display
 # ---------------------------------------------------------------------------
 
-
-# On the main menu there is nothing to go back to, so the back key is given the
-# screen an operator standing at the boiler wants most.
-ROOT_LEGEND = (
-    SCROLL_KEYS,
-    (cap_for(ENTER), _t("Open", "باز کردن")),
-    (cap_for(NEXT), ""),
-    (cap_for(CANCEL), _t("Status", "وضعیت")),
-)
 
 # How often the status screen redraws itself when there is no keypad to ask for
 # it. Matched to the sensor cadence: anything faster redraws the same numbers.
@@ -3588,12 +3555,7 @@ async def _run_status_display(state: RuntimeState, view: Screen) -> None:
             await view.splash(
                 "Status",
                 window,
-                legend=(
-                    SCROLL_KEYS,
-                    (cap_for(ENTER), _t("OK", "تأیید")),
-                    (cap_for(NEXT), ""),
-                    (cap_for(CANCEL), _t("Back", "بازگشت")),
-                ),
+                legend=STD_LEGEND,
             )
         except Exception as exc:
             await state.log(
