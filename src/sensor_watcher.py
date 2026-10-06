@@ -207,6 +207,17 @@ class SensorWatcher:
         except OSError as exc:
             _log.warning("[sensor] Could not write the sensor watch cache: %s", exc)
 
+    def reset(self) -> None:
+        """Clear the sensor history and delete the cache file."""
+        self.sensors.clear()
+        self._dirty = False
+        try:
+            if SENSOR_WATCH_CACHE_PATH.exists():
+                SENSOR_WATCH_CACHE_PATH.unlink()
+                _log.info("[sensor] Sensor watch cache deleted")
+        except OSError as exc:
+            _log.warning("[sensor] Could not delete the sensor watch cache: %s", exc)
+
     async def run(self, state: RuntimeState) -> None:
         """Watch the bus until shutdown."""
         if self.mock:

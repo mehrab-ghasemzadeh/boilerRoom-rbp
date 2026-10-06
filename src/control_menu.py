@@ -69,7 +69,7 @@ from setpoint_store import (
 from device_config import ConfigError, config_store, describe as describe_config
 from display_font import DEGREE
 from display_canvas import text_width, truncate, wrap
-from keypad_layout import CANCEL, ENTER, NEXT, cap_for
+from keypad_layout import CANCEL, ENTER, NEXT, SCROLL_DOWN, SCROLL_UP, cap_for
 from logging_setup import get_logger
 import language
 from anti_freeze import (
@@ -80,7 +80,7 @@ from anti_freeze import choices as antifreeze_choices
 from mapping_provider import DEFAULT_MAPPING_PATH
 from limits_guard import limit_guard
 from runtime_state import RuntimeState
-from screen import BODY_COLUMNS, SCROLL_KEYS, Screen
+from screen import BODY_COLUMNS, BODY_ROWS, SCROLL_KEYS, Screen, TEXT_OFFSET, _translate_line
 from schedule_editor import (
     ScheduleEditError,
     add_exception,
@@ -3026,6 +3026,30 @@ def _sensor_id_rows() -> list[str]:
     return rows
 
 
+async def _reset_sensor_cache(state: RuntimeState) -> None:
+    """
+    Reset the sensor connection order cache with confirmation.
+
+    Deletes the persisted cache file and clears the in-memory sensor history,
+    so the next probes fitted will be numbered from 1 again.
+    """
+    answer = await _prompt(
+        _t(
+            "\n  Reset sensor connection order? This deletes the cache and "
+            "renumbers probes from 1. [1 or y = yes]: ",
+            "\n  ترتیب اتصال سنسورها بازنشانی شود؟ این کار حافظه نهان را حذف "
+            "و سنسورها را از ۱ شماره‌گذاری می‌کند. [۱ یا ب = بله]: ",
+        )
+    )
+    if not _is_yes(answer):
+        await state.echo(_t("[menu] Cancelled.\n", "[menu] لغو شد.\n"))
+        return
+
+    sensor_watcher.reset()
+    await state.log("[menu] Operator reset the sensor connection order cache", level=logging.WARNING)
+    await state.echo(_t("\n[menu] Sensor connection order reset.\n", "\n[menu] ترتیب اتصال سنسورها بازنشانی شد.\n"))
+
+
 async def _sensor_ids_menu(state: RuntimeState) -> None:
     """
     Every thermal sensor the bus has ever seen, in the order it was connected.
@@ -3043,11 +3067,56 @@ async def _sensor_ids_menu(state: RuntimeState) -> None:
         await _sensor_ids_menu_terminal(state)
         return
 
-    await view.watch(
-        "Thermal sensor IDs",
-        _sensor_id_rows,
-        interval=sensor_watcher.interval,
+    async def rows() -> list[str]:
+        return _sensor_id_rows()
+
+    # Custom legend with Reset option (NEXT key = key "6")
+    legend = (
+        SCROLL_KEYS,
+        (cap_for(NEXT), _t("Reset order", "بازنشانی ترتیب")),
+        (cap_for(CANCEL), _t("Back", "بازگشت")),
     )
+
+    top = 0
+    while True:
+        items = rows() or [_t("Nothing to see yet.", "هیچ موردی برای نمایش وجود ندارد.")]
+        total = len(items)
+        limit = max(0, total - BODY_ROWS)
+        top = min(top, limit)
+
+        await _flush_page(state)
+
+        view.frame("Thermal sensor IDs", legend=legend)
+
+        for slot in range(BODY_ROWS):
+            position = top + slot
+            if position >= total:
+                break
+            view._row(
+                view._body_row(slot) + TEXT_OFFSET,
+                _translate_line(items[position]),
+            )
+
+        view._scrollbar(top, BODY_ROWS, total)
+        await view.render()
+
+        try:
+            key = await asyncio.wait_for(view._key(), timeout=sensor_watcher.interval)
+        except asyncio.TimeoutError:
+            continue
+
+        if key == SCROLL_UP:
+            top = max(0, top - 1)
+        elif key == SCROLL_DOWN:
+            top = min(limit, top + 1)
+        elif key == NEXT:
+            # Reset sensor cache with confirmation
+            await _reset_sensor_cache(state)
+            # After reset, continue the loop with fresh data
+            top = 0  # Reset scroll position after cache reset
+            continue
+        else:
+            return
 
 
 async def _sensor_ids_menu_terminal(state: RuntimeState) -> None:
@@ -3061,7 +3130,10 @@ async def _sensor_ids_menu_terminal(state: RuntimeState) -> None:
     interval = sensor_watcher.interval
     reader = asyncio.create_task(
         input_device().read_line(
-            "  Enter to leave (the list refreshes until then) ...\n"
+            _t(
+                "  Enter to leave, 'r' to reset order (the list refreshes until then) ...\n",
+                "  برای خروج Enter، برای بازنشانی 'r' (فهرست تا زمانی که بمانید تازه می‌شود) ...\n",
+            )
         )
     )
     stopping = asyncio.create_task(state.shutdown.wait())
@@ -3078,15 +3150,8 @@ async def _sensor_ids_menu_terminal(state: RuntimeState) -> None:
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if reader in done:
-                # The answer is irrelevant: any line leaves, the
-                # same way an empty answer does everywhere else in
-                # the menu. EOFError is the terminal closing, which
-                # the menu loop above already reads as "no input
-                # device left"; anything else is this screen
-                # leaving the same way, because a screen that cannot
-                # be answered has nothing to keep showing.
                 try:
-                    await reader
+                    answer = await reader
                 except EOFError:
                     raise
                 except Exception as exc:
@@ -3095,6 +3160,22 @@ async def _sensor_ids_menu_terminal(state: RuntimeState) -> None:
                         f"({type(exc).__name__}: {exc}) — leaving the screen",
                         level=logging.WARNING,
                     )
+                    return
+
+                answer = answer.strip().lower()
+                if answer in ("r", "reset"):
+                    await _reset_sensor_cache(state)
+                    # Re-create the reader for the next cycle
+                    reader = asyncio.create_task(
+                        input_device().read_line(
+                            _t(
+                                "  Enter to leave, 'r' to reset order (the list refreshes until then) ...\n",
+                                "  برای خروج Enter، برای بازنشانی 'r' (فهرست تا زمانی که بمانید تازه می‌شود) ...\n",
+                            )
+                        )
+                    )
+                    continue
+
                 return
     finally:
         for task in (reader, stopping):
