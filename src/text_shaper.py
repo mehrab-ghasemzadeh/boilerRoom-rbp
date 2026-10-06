@@ -155,6 +155,8 @@ class Piece:
 
 def has_rtl(text: str) -> bool:
     """True when ``text`` holds anything this module has to reorder."""
+    if not isinstance(text, str):
+        return False
     return any(ord(character) >= _RTL_FROM for character in text)
 
 
@@ -171,6 +173,8 @@ def _is_rtl_letter(character: str) -> bool:
     Diacritics, which are combining and take their shape from the letter they
     sit on, count as letters so they stay inside the run they belong to.
     """
+    if not isinstance(character, str) or len(character) != 1:
+        return False
     if character.isdigit():
         return False
     if unicodedata.bidirectional(character) in _NUMBER_CLASSES:

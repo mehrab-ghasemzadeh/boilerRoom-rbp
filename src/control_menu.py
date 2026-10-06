@@ -557,19 +557,23 @@ async def _show_last_readings(state: RuntimeState) -> None:
         await state.echo("\n[menu] No readings yet.\n")
         return
 
-    await state.echo(f"\n[menu] Last readings at {read_at.isoformat()} (cycle {snap['cycle_count']})")
     for sensor_id, value in sorted(snap["temperatures"].items()):
         cfg = TEMPERATURE_SENSORS.get(sensor_id, {})
         label = cfg.get("name", f"Sensor {sensor_id}")
         if value is None:
-            await state.echo(f"  [{sensor_id}] {label}: unavailable")
+            await state.echo(f"{label} : unavailable")
         else:
-            await state.echo(f"  [{sensor_id}] {label}: {value:.2f} °C")
+            await state.echo(f"{label} : {value:.2f} °C")
+
+    await state.echo("-" * 20)
 
     for sensor_id, value in sorted(snap["gas"].items()):
         cfg = GAS_SENSORS.get(sensor_id, {})
         label = cfg.get("name", f"Sensor {sensor_id}")
-        await state.echo(f"  [{sensor_id}] {label}: {value}")
+        await state.echo(f"{label} : {value}")
+
+    await state.echo("-" * 20)
+    await state.echo(f"Read at: {read_at.isoformat()}  (cycle {snap['cycle_count']})")
     await state.echo("")
 
 
@@ -3455,7 +3459,7 @@ async def _start_screen(state: RuntimeState, device) -> Screen | None:
     # Read fresh at every frame rather than sampled once here, so the icon in
     # the title bar follows a reconnect instead of showing whatever the link was
     # doing when the menu came up.
-    view = Screen(display, device, echo=state.write, link=lambda: state.ws_connected)
+    view = Screen(display, device, echo=state.write, link=lambda: state.ws_connected, warning=state.has_gas_warning_sync)
     set_screen(view)
     await view.splash("Boiler room", ["", "  Starting up ...", ""])
     return view

@@ -630,7 +630,7 @@ def _entry_width(entry: tuple[str, str]) -> int:
 class Screen:
     """Draws screens on a display and reads the keypad that answers them."""
 
-    def __init__(self, display, device, *, echo=None, link=None):
+    def __init__(self, display, device, *, echo=None, link=None, warning=None):
         self.display = display
         self.device = device
         self.canvas = Canvas()
@@ -640,6 +640,10 @@ class Screen:
         # caller does not know, which is drawn as disconnected rather than as a
         # reassuring blank.
         self.link = link
+
+        # Whether there is a gas warning (any sensor > 2000). Asked fresh at
+        # every frame so the indicator updates immediately.
+        self.warning = warning
 
         # The mock display prints its frames; routing them through the menu's
         # own output keeps them from interleaving with it.
@@ -688,9 +692,8 @@ class Screen:
         """
         Clear the canvas and draw the title bar and legend strip.
 
-        The bar carries the page title, the connection icon and the time, which
-        is what an operator standing in front of it needs to know: where they
-        are, whether the device can still reach the server, and how late it is.
+        The bar carries the page title, the connection icon (only when connected),
+        the warning indicator (! when any gas sensor > 2000), and the time.
         They are placed from opposite ends of the bar and the title is cut to
         whatever room is left, so no two can ever overlap however long the title
         turns out to be.
@@ -703,27 +706,49 @@ class Screen:
 
         clock = _clock_text()
         connected = bool(self.link and self.link())
-        # Width taken off the title's end before anything is drawn: the clock,
-        # the connection icon, and a gap either side of each so neither touches
-        # the title's last letter.
-        used = text_width(clock) + LINK_WIDTH + 2
+        warning = bool(self.warning and self.warning())
+        
+        # Calculate widths for the right-side elements (clock, connection icon, warning icon)
+        # Warning indicator is "(!)" = 3 chars
+        warning_width = text_width("(!)") if warning else 0
+        # Connection icon width + gap
+        link_width = LINK_WIDTH + 2 if connected else 0
+        # Clock width + gap
+        clock_width = text_width(clock) + 2
+        
+        # Total used width on the right (for LTR) or left (for RTL)
+        used = clock_width + link_width + warning_width
         room = max(0, BAR_COLUMNS - used - 4)
         shown = truncate(title.upper(), room)
 
         rtl = has_rtl(shown)
-        # The title sits on the side the reader starts from and the clock on the
-        # side they finish, which for Persian is the right and the left. The
-        # icon hugs the clock: it describes the link, not the page.
         if rtl:
             canvas.text_right(WIDTH - TEXT_X, 0, shown, on=False)
-            icon_x = TEXT_X + text_width(clock) + 2
-            canvas.text(TEXT_X, 0, clock, on=False)
-            _draw_link(canvas, icon_x, (TITLE_HEIGHT - LINK_HEIGHT) // 2, connected)
+            x = TEXT_X
+            # Clock on far left
+            canvas.text(x, 0, clock, on=False)
+            x += clock_width
+            # Connection icon next to clock (only if connected)
+            if connected:
+                _draw_link(canvas, x, (TITLE_HEIGHT - LINK_HEIGHT) // 2, connected)
+                x += link_width
+            # Warning indicator (!) next to connection
+            if warning:
+                canvas.text(x, 0, "(!)", on=False)
         else:
             canvas.text(TEXT_X, 0, shown, on=False)
+            x = WIDTH - TEXT_X - clock_width
+            # Clock on far right
             canvas.text_right(WIDTH - TEXT_X, 0, clock, on=False)
-            icon_right = WIDTH - TEXT_X - text_width(clock) - 2
-            _draw_link(canvas, icon_right - LINK_WIDTH, (TITLE_HEIGHT - LINK_HEIGHT) // 2, connected)
+            x -= clock_width
+            # Warning indicator (!) left of clock
+            if warning:
+                x -= warning_width
+                canvas.text(x, 0, "(!)", on=False)
+            # Connection icon left of warning (only if connected)
+            if connected:
+                x -= link_width
+                _draw_link(canvas, x, (TITLE_HEIGHT - LINK_HEIGHT) // 2, connected)
 
         self._legend(legend)
 

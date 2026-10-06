@@ -136,6 +136,9 @@ _EXTRA = {
 
 def glyph(character: str) -> tuple[int, ...]:
     """The five column bytes for one character."""
+    # Defensive: only process single characters
+    if len(character) != 1:
+        return FALLBACK
     extra = _EXTRA.get(character)
     if extra is not None:
         return extra
@@ -147,6 +150,9 @@ def glyph(character: str) -> tuple[int, ...]:
 
 
 def has_glyph(character: str) -> bool:
+    # Defensive: only single characters
+    if len(character) != 1:
+        return False
     if character in _EXTRA:
         return True
     return FIRST_CHAR <= ord(character) <= LAST_CHAR
