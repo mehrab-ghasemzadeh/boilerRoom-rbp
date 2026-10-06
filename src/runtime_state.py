@@ -527,6 +527,11 @@ class RuntimeState:
                 "cycle_count": self._cycle_count,
             }
 
+    async def has_gas_warning(self) -> bool:
+        """Check if any gas sensor reading is above 2000."""
+        async with self._data_lock:
+            return any(value > 2000 for value in self._last_gas.values())
+
     async def get_read_interval(self) -> float:
         return self.read_interval
 
