@@ -2150,11 +2150,11 @@ STD_LEGEND = (
     (cap_for(CANCEL), _t("back", "بازگشت")),
 )
 
-# Main menu: Enter opens submenu, Back shows Status
+# Main menu: Enter selects, Cancel shows Status
 ROOT_LEGEND = (
     SCROLL_KEYS,
-    (cap_for(ENTER), _t("open", "باز کردن")),
-    (cap_for(NEXT), _t("next", "بعدی")),
+    (cap_for(ENTER), _t("select", "انتخاب")),
+    (cap_for(NEXT), ""),
     (cap_for(CANCEL), _t("status", "وضعیت")),
 )
 
