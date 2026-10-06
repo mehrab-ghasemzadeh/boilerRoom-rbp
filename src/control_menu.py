@@ -565,14 +565,14 @@ async def _show_last_readings(state: RuntimeState) -> None:
         else:
             await state.echo(f"{label} : {value:.2f} °C")
 
-    await state.echo("_____________________________")
+    await state.echo("-" * 21)
 
     for sensor_id, value in sorted(snap["gas"].items()):
         cfg = GAS_SENSORS.get(sensor_id, {})
         label = cfg.get("name", f"Sensor {sensor_id}")
         await state.echo(f"{label} : {value}")
 
-    await state.echo("_____________________________")
+    await state.echo("-" * 21)
     await state.echo(f"Read at: {read_at.isoformat()}  (cycle {snap['cycle_count']})")
     await state.echo("")
 
