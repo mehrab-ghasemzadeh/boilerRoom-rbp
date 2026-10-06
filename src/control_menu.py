@@ -631,9 +631,9 @@ async def _relay_menu(state: RuntimeState) -> None:
     # Legend for the relay table
     legend = (
         SCROLL_KEYS,
-        (cap_for(ENTER), "Toggle"),
-        (cap_for(NEXT), "Toggle"),
-        (cap_for(CANCEL), "Back"),
+        (cap_for(ENTER), _t("Toggle", "تغییر")),
+        (cap_for(NEXT), _t("Toggle", "تغییر")),
+        (cap_for(CANCEL), _t("Back", "بازگشت")),
     )
 
     index = 0
@@ -882,9 +882,9 @@ async def _mode_menu(state: RuntimeState) -> None:
     # Legend for the mode table
     legend = (
         SCROLL_KEYS,
-        (cap_for(ENTER), "Change"),
-        (cap_for(NEXT), "Change"),
-        (cap_for(CANCEL), "Back"),
+        (cap_for(ENTER), _t("Change", "تغییر")),
+        (cap_for(NEXT), _t("Change", "تغییر")),
+        (cap_for(CANCEL), _t("Back", "بازگشت")),
     )
 
     index = 0
@@ -916,9 +916,9 @@ async def _mode_menu(state: RuntimeState) -> None:
             index=mode_index,
             legend=(
                 SCROLL_KEYS,
-                (cap_for(ENTER), "Select"),
-                (cap_for(NEXT), "Select"),
-                (cap_for(CANCEL), "Cancel"),
+                (cap_for(ENTER), _t("Select", "انتخاب")),
+                (cap_for(NEXT), ""),
+                (cap_for(CANCEL), _t("Cancel", "لغو")),
             ),
         )
 
@@ -1393,9 +1393,9 @@ async def _select_targets_table(state: RuntimeState, view: Screen) -> list[Targe
     items = [f"{str(target):<12} relay {relay_for_target(target)}" for target in targets]
     legend = (
         SCROLL_KEYS,
-        (cap_for(ENTER), "Toggle"),
-        (cap_for(NEXT), "Next"),
-        (cap_for(CANCEL), "Cancel"),
+        (cap_for(ENTER), _t("Toggle", "تغییر")),
+        (cap_for(NEXT), _t("Next", "بعدی")),
+        (cap_for(CANCEL), _t("Cancel", "لغو")),
     )
 
     selected, _ = await view.select_checkboxes("Select targets", items, legend=legend)
@@ -1417,9 +1417,9 @@ async def _select_days_table(state: RuntimeState, view: Screen) -> list[str] | N
     items = day_labels
     legend = (
         SCROLL_KEYS,
-        (cap_for(ENTER), "Toggle"),
-        (cap_for(NEXT), "Next"),
-        (cap_for(CANCEL), "Cancel"),
+        (cap_for(ENTER), _t("Toggle", "تغییر")),
+        (cap_for(NEXT), _t("Next", "بعدی")),
+        (cap_for(CANCEL), _t("Cancel", "لغو")),
     )
 
     selected, _ = await view.select_checkboxes("Select days", items, legend=legend)
@@ -1450,9 +1450,9 @@ async def _select_time_component(
     items = [f"{v:02d}" for v in value_list]
     legend = (
         SCROLL_KEYS,
-        (cap_for(ENTER), "Select"),
-        (cap_for(NEXT), "Select"),
-        (cap_for(CANCEL), "Cancel"),
+        (cap_for(ENTER), _t("Select", "انتخاب")),
+        (cap_for(NEXT), ""),
+        (cap_for(CANCEL), _t("Cancel", "لغو")),
     )
 
     index = await view.select_list(title, items, legend=legend)
@@ -1466,9 +1466,9 @@ async def _select_on_off(state: RuntimeState, view: Screen) -> bool | None:
     items = ["ON", "OFF"]
     legend = (
         SCROLL_KEYS,
-        (cap_for(ENTER), "Select"),
-        (cap_for(NEXT), "Select"),
-        (cap_for(CANCEL), "Cancel"),
+        (cap_for(ENTER), _t("Select", "انتخاب")),
+        (cap_for(NEXT), ""),
+        (cap_for(CANCEL), _t("Cancel", "لغو")),
     )
 
     index = await view.select_list("Switch state", items, legend=legend)
@@ -1527,9 +1527,9 @@ async def _remove_weekly_rule_v2(state: RuntimeState) -> None:
 
     legend = (
         SCROLL_KEYS,
-        (cap_for(ENTER), "View"),
-        (cap_for(NEXT), "Delete"),
-        (cap_for(CANCEL), "Back"),
+        (cap_for(ENTER), _t("Select", "انتخاب")),
+        (cap_for(NEXT), _t("Del", "حذف")),
+        (cap_for(CANCEL), ""),
     )
 
     while not state.shutdown.is_set():
@@ -1572,9 +1572,9 @@ async def _remove_weekly_rule_v2(state: RuntimeState) -> None:
             index=0,
             legend=(
                 SCROLL_KEYS,
-                (cap_for(ENTER), "Select"),
-                (cap_for(NEXT), "Select"),
-                (cap_for(CANCEL), "Back"),
+                (cap_for(ENTER), _t("Select", "انتخاب")),
+                (cap_for(NEXT), ""),
+                (cap_for(CANCEL), _t("Back", "بازگشت")),
             ),
         )
 
@@ -1594,9 +1594,9 @@ async def _remove_weekly_rule_v2(state: RuntimeState) -> None:
                 index=0,
                 legend=(
                     SCROLL_KEYS,
-                    (cap_for(ENTER), "Select"),
-                    (cap_for(NEXT), "Select"),
-                    (cap_for(CANCEL), "Back"),
+                    (cap_for(ENTER), _t("Select", "انتخاب")),
+                    (cap_for(NEXT), ""),
+                    (cap_for(CANCEL), _t("Back", "بازگشت")),
                 ),
             )
 
@@ -1894,9 +1894,9 @@ async def _remove_exception_v2(state: RuntimeState) -> None:
 
         chosen = await view.select("Delete exception", rows, index=index, legend=(
             SCROLL_KEYS,
-            (cap_for(ENTER), "View"),
-            (cap_for(NEXT), "Delete"),
-            (cap_for(CANCEL), "Back"),
+            (cap_for(ENTER), _t("Select", "انتخاب")),
+            (cap_for(NEXT), _t("Del", "حذف")),
+            (cap_for(CANCEL), ""),
         ))
         if chosen is None:
             return
@@ -1926,9 +1926,9 @@ async def _remove_exception_v2(state: RuntimeState) -> None:
             index=0,
             legend=(
                 SCROLL_KEYS,
-                (cap_for(ENTER), "Select"),
-                (cap_for(NEXT), "Select"),
-                (cap_for(CANCEL), "Back"),
+                (cap_for(ENTER), _t("Select", "انتخاب")),
+                (cap_for(NEXT), ""),
+                (cap_for(CANCEL), _t("Back", "بازگشت")),
             ),
         )
 
@@ -1948,9 +1948,9 @@ async def _remove_exception_v2(state: RuntimeState) -> None:
                 index=0,
                 legend=(
                     SCROLL_KEYS,
-                    (cap_for(ENTER), "Select"),
-                    (cap_for(NEXT), "Select"),
-                    (cap_for(CANCEL), "Back"),
+                    (cap_for(ENTER), _t("Select", "انتخاب")),
+                    (cap_for(NEXT), ""),
+                    (cap_for(CANCEL), _t("Back", "بازگشت")),
                 ),
             )
 
@@ -2035,9 +2035,9 @@ async def _schedule_editor_menu(state: RuntimeState) -> None:
 
     legend = (
         SCROLL_KEYS,
-        (cap_for(ENTER), "Select"),
-        (cap_for(NEXT), "Select"),
-        (cap_for(CANCEL), "Back"),
+        (cap_for(ENTER), _t("Select", "انتخاب")),
+        (cap_for(NEXT), ""),
+        (cap_for(CANCEL), _t("Back", "بازگشت")),
     )
 
     index = 0
@@ -2176,9 +2176,9 @@ DEVICE_LIMIT_SHORT = "none"
 # move, choose, go back. The accept key and the next key are the same key here.
 _SET_LEGEND = (
     SCROLL_KEYS,
-    (cap_for(ENTER), "Set"),
-    (cap_for(NEXT), "Set"),
-    (cap_for(CANCEL), "Back"),
+    (cap_for(ENTER), _t("Select", "انتخاب")),
+    (cap_for(NEXT), ""),
+    (cap_for(CANCEL), _t("Back", "بازگشت")),
 )
 
 
@@ -3091,6 +3091,7 @@ async def _sensor_ids_menu(state: RuntimeState) -> None:
     # Custom legend with Reset option (NEXT key = key "6")
     legend = (
         SCROLL_KEYS,
+        (cap_for(ENTER), _t("Select", "انتخاب")),
         (cap_for(NEXT), _t("Reset", "بازنشانی")),
         (cap_for(CANCEL), _t("Back", "بازگشت")),
     )
@@ -3306,7 +3307,12 @@ async def _start_input_device(state: RuntimeState):
 
 # On the main menu there is nothing to go back to, so the back key is given the
 # screen an operator standing at the boiler wants most.
-ROOT_LEGEND = (SCROLL_KEYS, (cap_for(ENTER), "Open"), (cap_for(CANCEL), "Status"))
+ROOT_LEGEND = (
+    SCROLL_KEYS,
+    (cap_for(ENTER), _t("Open", "باز کردن")),
+    (cap_for(NEXT), ""),
+    (cap_for(CANCEL), _t("Status", "وضعیت")),
+)
 
 # How often the status screen redraws itself when there is no keypad to ask for
 # it. Matched to the sensor cadence: anything faster redraws the same numbers.
@@ -3582,7 +3588,12 @@ async def _run_status_display(state: RuntimeState, view: Screen) -> None:
             await view.splash(
                 "Status",
                 window,
-                legend=((cap_for(ENTER), "no keypad fitted"),),
+                legend=(
+                    SCROLL_KEYS,
+                    (cap_for(ENTER), _t("OK", "تأیید")),
+                    (cap_for(NEXT), ""),
+                    (cap_for(CANCEL), _t("Back", "بازگشت")),
+                ),
             )
         except Exception as exc:
             await state.log(
