@@ -733,9 +733,75 @@ class Screen:
 
         Always drawn, and drawn last, so there is no screen an operator can
         reach without being told the way out of it.
+
+        Legend format from legend_content.py: (key_cap, (english, persian))
+        Special: SCROLL_KEYS ("\x01scroll", "") for scroll indicator
         """
         canvas = self.canvas
         canvas.fill_rect(0, LEGEND_TOP, WIDTH, LEGEND_HEIGHT, True)
+        if not entries:
+            return
+
+        is_persian = language.is_persian()
+
+        def _label(label: str) -> str:
+            if not is_persian:
+                return label
+            return FA_LABELS.get(label, label)
+
+        def _entry_width(entry: tuple) -> int:
+            if entry == SCROLL_KEYS:
+                return _SCROLL_WIDTH
+            key_cap = entry[0]
+            # New format: (key_cap, (english, persian))
+            if len(entry) >= 2 and isinstance(entry[1], tuple):
+                en, fa = entry[1]
+                label = fa if is_persian else en
+            else:
+                # Old format: (key_cap, label) - label is English, needs translation
+                label = entry[1] if len(entry) >= 2 else ""
+                label = _label(label)
+            return text_width(f"{key_cap} {label}" if label else key_cap)
+
+        room = WIDTH - TEXT_X * 2
+        content = sum(_entry_width(entry) for entry in entries)
+
+        # Widest spacing that still fits, then the caps on their own
+        for gap in (18, 12, 6):
+            if content + gap * (len(entries) - 1) <= room:
+                break
+        else:
+            gap = 1
+            entries = tuple(
+                entry if entry == SCROLL_KEYS else (entry[0], "") for entry in entries
+            )
+            content = sum(_entry_width(entry) for entry in entries)
+
+        total = content + gap * (len(entries) - 1)
+        x = max(TEXT_X, (WIDTH - total) // 2)
+        y = LEGEND_TOP + TEXT_OFFSET
+
+        for index, entry in enumerate(entries):
+            if index:
+                x += gap
+            if entry == SCROLL_KEYS:
+                x = canvas.text(x, y, cap_for(SCROLL_UP), on=False)
+                canvas.triangle_up(x, y + 3, on=False)
+                x += 6 + 4
+                x = canvas.text(x, y, cap_for(SCROLL_DOWN), on=False)
+                canvas.triangle_down(x, y + 3, on=False)
+                x += 6
+                continue
+            key_cap = entry[0]
+            # New format: (key_cap, (english, persian))
+            if len(entry) >= 2 and isinstance(entry[1], tuple):
+                en, fa = entry[1]
+                label = fa if is_persian else en
+            else:
+                # Old format: (key_cap, label) - label is English, needs translation
+                label = entry[1] if len(entry) >= 2 else ""
+                label = _label(label)
+            x = canvas.text(x, y, f"{key_cap} {label}" if label else key_cap, on=False)
 
     def _scrollbar(self, top: int, visible: int, total: int) -> None:
         """A thumb on the right edge showing which slice of a list is shown."""
