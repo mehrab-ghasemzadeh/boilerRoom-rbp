@@ -231,18 +231,15 @@ class SensorWatcher:
 
     def rows(self) -> list[str]:
         """
-        The connection order as the panel draws it: one row per sensor.
+        The connection order as the panel draws it: one row per connected sensor.
 
-        The order number and the sensor id are the whole of it — a row
-        that has had its number cut off has thrown away the only part
-        of it that is news. A sensor that is not on the bus any more
-        carries a ``~``, because whether it is still there is the one
-        other thing an operator wants at a glance, and there is no room
-        on a twenty-column row to spell it out.
+        Disconnected sensors are omitted from the list entirely.
         """
         return [
-            f"{order}  {entry.sensor_id}" + ("" if entry.connected else "~")
-            for order, entry in enumerate(self.sensors.values(), start=1)
+            f"{order}  {entry.sensor_id}"
+            for order, entry in enumerate(
+                (e for e in self.sensors.values() if e.connected), start=1
+            )
         ]
 
     def describe(self) -> list[str]:
@@ -261,23 +258,19 @@ class SensorWatcher:
                 "",
             ]
 
-        connected = sum(1 for entry in self.sensors.values() if entry.connected)
+        connected_entries = [e for e in self.sensors.values() if e.connected]
+        connected = len(connected_entries)
         lines = [
             "[menu] Thermal sensor IDs — "
-            f"{len(self.sensors)} seen, {connected} connected, "
-            "in the order they were connected",
+            f"{connected} connected, in the order they were connected",
         ]
-        if not self.sensors:
+        if not connected_entries:
             lines.append(
                 "  No thermal sensors on the bus yet — this list fills in as "
                 "probes are fitted."
             )
-        for order, entry in enumerate(self.sensors.values(), start=1):
-            state = (
-                f"connected since {_iso(entry.first_seen)}"
-                if entry.connected
-                else f"DISCONNECTED — last seen {_iso(entry.last_seen)}"
-            )
+        for order, entry in enumerate(connected_entries, start=1):
+            state = f"connected since {_iso(entry.first_seen)}"
             lines.append(f"  {order}) {entry.sensor_id}  {state}")
         lines.append("")
         return lines
