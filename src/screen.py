@@ -396,7 +396,7 @@ FA_LINES = {
 # the data already in them and pass through untouched.
 FA_ROWS = {
     # Mode choices.
-    "automatic": "خودکار",
+    "automatic": "اتومات",
     "manual": "دستی",
     "ON": "روشن",
     "OFF": "خاموش",
