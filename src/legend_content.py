@@ -18,11 +18,7 @@ def _t(en: str, fa: str) -> tuple[str, str]:
     return (en, fa)
 
 # Scroll keys - same as in screen.py
-# SCROLL_KEYS = ("\x01scroll", "")
-SCROLL_KEYS = (
-    (cap_for(SCROLL_UP), ("▲")),
-    (cap_for(SCROLL_DOWN), ("▼")),
-)
+SCROLL_KEYS = ("\x01scroll", "")
 
 # Standard scroll legend used by most list screens
 SCROLL_LEGEND = (SCROLL_KEYS,) + (
