@@ -3079,7 +3079,7 @@ async def _sensor_ids_menu(state: RuntimeState) -> None:
 
     top = 0
     while True:
-        items = rows() or [_t("Nothing to see yet.", "هیچ موردی برای نمایش وجود ندارد.")]
+        items = await rows() or [_t("Nothing to see yet.", "هیچ موردی برای نمایش وجود ندارد.")]
         total = len(items)
         limit = max(0, total - BODY_ROWS)
         top = min(top, limit)
