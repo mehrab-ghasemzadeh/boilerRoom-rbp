@@ -3033,17 +3033,35 @@ async def _reset_sensor_cache(state: RuntimeState) -> None:
     Deletes the persisted cache file and clears the in-memory sensor history,
     so the next probes fitted will be numbered from 1 again.
     """
-    answer = await _prompt(
-        _t(
-            "\n  Reset sensor connection order? This deletes the cache and "
-            "renumbers probes from 1. [1 or y = yes]: ",
-            "\n  ترتیب اتصال سنسورها بازنشانی شود؟ این کار حافظه نهان را حذف "
-            "و سنسورها را از ۱ شماره‌گذاری می‌کند. [۱ یا ب = بله]: ",
+    view = screen()
+    if view is not None:
+        # Panel: use select with Yes/No options
+        confirm = await view.select(
+            _t("Reset sensor order?", "ترتیب سنسورها بازنشانی شود؟"),
+            [_t("No", "خیر"), _t("Yes", "بله")],
+            index=0,
+            legend=(
+                SCROLL_KEYS,
+                (cap_for(ENTER), _t("Select", "انتخاب")),
+                (cap_for(NEXT), ""),
+                (cap_for(CANCEL), _t("Back", "بازگشت")),
+            ),
         )
-    )
-    if not _is_yes(answer):
-        await state.echo(_t("[menu] Cancelled.\n", "[menu] لغو شد.\n"))
-        return
+        if confirm != 1:
+            return
+    else:
+        # Terminal: text prompt
+        answer = await _prompt(
+            _t(
+                "\n  Reset sensor connection order? This deletes the cache and "
+                "renumbers probes from 1. [y/n]: ",
+                "\n  ترتیب اتصال سنسورها بازنشانی شود؟ این کار حافظه نهان را حذف "
+                "و سنسورها را از ۱ شماره‌گذاری می‌کند. [ب/خ]: ",
+            )
+        )
+        if not _is_yes(answer):
+            await state.echo(_t("[menu] Cancelled.\n", "[menu] لغو شد.\n"))
+            return
 
     sensor_watcher.reset()
     await state.log("[menu] Operator reset the sensor connection order cache", level=logging.WARNING)
