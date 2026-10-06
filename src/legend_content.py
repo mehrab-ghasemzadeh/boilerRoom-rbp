@@ -23,7 +23,7 @@ def _t(en: str, fa: str) -> tuple[str, str]:
 
 
 # Standard scroll legend used by most list screens
-SCROLL_LEGEND = SCROLL_KEYS + (
+SCROLL_LEGEND = (SCROLL_KEYS,) + (
     (cap_for(ENTER), _t("select", "انتخاب")),
     (cap_for(CANCEL), _t("back", "بازگشت")),
 )
@@ -31,7 +31,7 @@ SCROLL_LEGEND = SCROLL_KEYS + (
 STD_LEGEND = SCROLL_LEGEND
 
 # Standard legend with Next instead of Enter
-SCROLL_NEXT_LEGEND = SCROLL_KEYS + (
+SCROLL_NEXT_LEGEND = (SCROLL_KEYS,) + (
     (cap_for(NEXT), _t("next", "بعدی")),
     (cap_for(CANCEL), _t("back", "بازگشت")),
 )
@@ -44,7 +44,7 @@ ROOT_LEGEND = (
 
 
 # Relay control - both Enter and Next toggle
-RELAY_LEGEND = SCROLL_KEYS + (
+RELAY_LEGEND = (SCROLL_KEYS,) + (
     (cap_for(ENTER), _t("toggle", "تغییر")),
     (cap_for(NEXT), _t("toggle", "تغییر")),
     (cap_for(CANCEL), _t("back", "بازگشت")),
