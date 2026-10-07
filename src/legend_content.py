@@ -88,7 +88,7 @@ LEGENDS = {
 
     # Unit modes
     "Unit Modes": SCROLL_LEGEND,
-    "Mode Options": (SCROLL_LEGEND,)+(
+    "Mode Options": SCROLL_LEGEND + (
         (cap_for(ENTER), _t("select", "انتخاب")),
         (cap_for(CANCEL), _t("back", "بازگشت")),
     ),
