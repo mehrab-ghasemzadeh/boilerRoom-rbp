@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import time
 from collections.abc import Callable
 
 from text_shaper import has_rtl
@@ -61,6 +62,7 @@ from keypad_layout import (
     cap_for,
 )
 from legend_content import get_legend
+from screen_saver import ScreenSaver
 
 # -- geometry ---------------------------------------------------------------
 
@@ -635,30 +637,36 @@ class Screen:
         self.device = device
         self.canvas = Canvas()
 
-        # Whether the link to the server is up, asked fresh at every frame so a
-        # reconnect shows up without waiting for the next redraw. None means the
-        # caller does not know, which is drawn as disconnected rather than as a
-        # reassuring blank.
         self.link = link
-
-        # Whether there is a gas warning (any sensor > 400). Asked fresh at
-        # every frame so the indicator updates immediately.
         self.warning = warning
 
-        # The mock display prints its frames; routing them through the menu's
-        # own output keeps them from interleaving with it.
+        self._idle_since = time.time()
+        self._screen_saver = ScreenSaver()
+
         set_writer = getattr(display, "set_writer", None)
         if set_writer is not None and echo is not None:
             set_writer(echo)
 
+    def update_activity(self) -> None:
+        self._idle_since = time.time()
+
     # -- plumbing ------------------------------------------------------------
 
     async def render(self) -> None:
+        now = time.time()
+        if self._screen_saver.should_activate(now - self._idle_since):
+            self._screen_saver.activate(self.canvas, self.link, self.warning)
+        elif self._screen_saver.active():
+            self._screen_saver.update(self.canvas, self.link, self.warning, now)
         await self.display.show(self.canvas)
 
     async def _key(self) -> str:
-        """One keypress. Raises EOFError once the input device has gone."""
-        return await self.device.read_key()
+        if self._screen_saver.active():
+            await self._screen_saver.fade_out(self.canvas)
+            self._screen_saver.deactivate()
+        key = await self.device.read_key()
+        self._idle_since = time.time()
+        return key
 
     # -- chrome --------------------------------------------------------------
 
@@ -698,6 +706,8 @@ class Screen:
         whatever room is left, so no two can ever overlap however long the title
         turns out to be.
         """
+        if self._screen_saver.active():
+            self._screen_saver.mark_stale()
         canvas = self.canvas
         canvas.clear()
         title = FA_TITLES.get(title, title) if language.is_persian() else title
