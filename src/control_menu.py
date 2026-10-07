@@ -899,8 +899,9 @@ async def _mode_menu(state: RuntimeState) -> None:
         modes = await state.get_modes()
         current = modes.get(target, "automatic")
 
-        # Use a simple select for mode choice
-        mode_choices = ["automatic", "manual"]
+        # Use a simple select for mode choice (with translation)
+        mode_values = ["automatic", "manual"]
+        mode_choices = [_t("automatic", "اتومات"), _t("manual", "دستی")]
         mode_index = 0 if current == "automatic" else 1
 
         mode_chosen = await view.select(
@@ -913,7 +914,7 @@ async def _mode_menu(state: RuntimeState) -> None:
         if mode_chosen is None:
             continue  # Back to unit list
 
-        mode = mode_choices[mode_chosen]
+        mode = mode_values[mode_chosen]
 
         if mode == current:
             await view.message("No change", [f"{target} is already {mode}."])
@@ -1007,7 +1008,7 @@ async def _mode_menu_terminal(state: RuntimeState) -> None:
 
     current = modes.get(target, "automatic")
     answer = await _prompt(
-        f"  {target} is {current}. Set to 1) automatic or 2) manual? (empty = back): "
+        f"  {target} is {current}. Set to 1) {_t('automatic', 'اتومات')} or 2) {_t('manual', 'دستی')}? (empty = back): "
     )
     choice = answer.strip().lower()
     if not choice:
