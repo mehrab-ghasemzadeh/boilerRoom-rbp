@@ -642,6 +642,7 @@ class Screen:
 
         self._idle_since = time.time()
         self._screen_saver = ScreenSaver()
+        self._screen_saver_task = None
 
         set_writer = getattr(display, "set_writer", None)
         if set_writer is not None and echo is not None:
@@ -650,20 +651,39 @@ class Screen:
     def update_activity(self) -> None:
         self._idle_since = time.time()
 
+    def _start_screen_saver_loop(self) -> None:
+        if self._screen_saver_task is not None:
+            return
+        self._screen_saver_task = asyncio.ensure_future(
+            self._screen_saver.run(
+                self.canvas, self.display.show, self.link, self.warning
+            )
+        )
+
+    async def _stop_screen_saver_loop(self) -> None:
+        task = self._screen_saver_task
+        self._screen_saver_task = None
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
     # -- plumbing ------------------------------------------------------------
 
     async def render(self) -> None:
         now = time.time()
         if self._screen_saver.should_activate(now - self._idle_since):
             self._screen_saver.activate(self.canvas, self.link, self.warning)
-        elif self._screen_saver.active():
-            self._screen_saver.update(self.canvas, self.link, self.warning)
+            self._start_screen_saver_loop()
         await self.display.show(self.canvas)
 
     async def _key(self) -> str:
         if self._screen_saver.active():
             await self._screen_saver.fade_out(self.canvas)
             self._screen_saver.deactivate()
+            await self._stop_screen_saver_loop()
         key = await self.device.read_key()
         self._idle_since = time.time()
         return key
@@ -708,6 +728,10 @@ class Screen:
         """
         if self._screen_saver.active():
             self._screen_saver.deactivate()
+            task = self._screen_saver_task
+            self._screen_saver_task = None
+            if task is not None:
+                task.cancel()
         canvas = self.canvas
         canvas.clear()
         title = FA_TITLES.get(title, title) if language.is_persian() else title

@@ -101,8 +101,14 @@ class ScreenSaver:
             self._y = max(0, min(self._y, HEIGHT - self._box_height))
         self._draw(canvas, link_fn, warning_fn)
 
-    def active(self):
-        return self._active
+    async def run(self, canvas, show_fn, link_fn, warning_fn):
+        try:
+            while self._active:
+                self.update(canvas, link_fn, warning_fn)
+                await show_fn(canvas)
+                await asyncio.sleep(0.05)
+        except asyncio.CancelledError:
+            pass
 
     def _draw(self, canvas, link_fn, warning_fn):
         padding = 6
