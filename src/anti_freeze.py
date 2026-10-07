@@ -213,22 +213,13 @@ def _watched_readings(
     return readings
 
 
-def _watched_sensor_ids() -> list[int]:
-    """Every probe the mapping puts on the water, whether or not it reads."""
-    return [
-        sensor_id
-        for sensor_id, cfg in sorted(TEMPERATURE_SENSORS.items())
-        if cfg.get("role") in WATCHED_ROLES
-    ]
-
-
 def _mapped_targets() -> list[Target]:
     """Every boiler and pump the device mapping gives a relay."""
     targets: list[Target] = []
     for cfg in RELAYS.values():
         kind = RELAY_TARGET_KIND.get(cfg.get("role"))
         unit = cfg.get("unit") or ""
-        if kind is None or not unit.startswith("pot_"):
+        if kind is None or not unit:
             continue
         try:
             targets.append(Target(kind, int(unit.split("_", 1)[1])))
@@ -243,12 +234,10 @@ class AntiFreezeGuard:
     def __init__(self) -> None:
         self._engaged = False
         self._trigger: tuple[int, float, str] | None = None
-        # Only the units this guard actually switched on. A unit it never
-        # touched is never one it puts out again, so a relay left on by a
-        # command or by the programme is left to whoever turned it on.
         self._held: set[Target] = set()
         self._manual_warned: set[Target] = set()
         self._unwatched_warned = False
+        self._engaged_readable_ids: set[int] = set()
 
         # The thresholds in force. The environment supplies the defaults; a pair
         # set on the device replaces them and is written to disk, because a
@@ -455,25 +444,14 @@ class AntiFreezeGuard:
         if not self._engaged:
             coldest = min(readings, key=lambda reading: reading[1])
             if coldest[1] < self._on_c:
-                await self._engage(state, relay_controller, coldest)
+                await self._engage(state, relay_controller, coldest, readings)
             return
 
-        # Re-asserted every cycle, not once at the latch. A command to stop
-        # heating during a freeze is undone here rather than being left to the
-        # operator's judgement, because the judgement has already been made.
         await self._assert_held(state, relay_controller)
 
-        # Released only when every watched probe is clear. One probe sitting at
-        # 11 °C holds the room on; that is the cold pipe, not a stale reading.
-        #
-        # "Every" includes *reporting*. A probe that has gone unreadable cannot
-        # clear the latch, because the probe that engaged it is very often the
-        # one that has failed — and reading the room as warm off the survivors
-        # is how a freeze protection stands the heating down in a freeze. The
-        # missing reading is reported as a sensor fault by the error reporter,
-        # so nothing is lost by waiting for it here.
-        if len(readings) == len(_watched_sensor_ids()) and all(
-            value > self._off_c for _, value, _ in readings
+        current_ids = {sid for sid, _, _ in readings}
+        if self._engaged_readable_ids.issubset(current_ids) and all(
+            value > self._off_c for sid, value, _ in readings if sid in self._engaged_readable_ids
         ):
             await self._release(state, relay_controller, readings)
 
@@ -484,11 +462,13 @@ class AntiFreezeGuard:
         state,
         relay_controller,
         coldest: tuple[int, float, str],
+        readings: list[tuple[int, float, str]],
     ) -> None:
         sensor_id, value, name = coldest
         self._engaged = True
         self._trigger = coldest
         self._manual_warned = set()
+        self._engaged_readable_ids = {sid for sid, _, _ in readings}
 
         await state.log(
             f"[antifreeze] ENGAGED — {name} at {value:.1f} °C is below "
@@ -570,6 +550,7 @@ class AntiFreezeGuard:
         self._engaged = False
         self._trigger = None
         self._manual_warned = set()
+        self._engaged_readable_ids = set()
 
         held = sorted(self._held)
         self._held = set()

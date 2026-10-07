@@ -390,10 +390,15 @@ def relay_for_target(target: Target) -> int | None:
     role = TARGET_ROLE.get(target.type)
     if role is None:
         return None
-    unit = f"pot_{target.index}"
     for relay_id, cfg in sorted(RELAYS.items()):
-        if cfg.get("role") == role and cfg.get("unit") == unit:
-            return relay_id
+        if cfg.get("role") != role:
+            continue
+        unit = cfg.get("unit") or ""
+        try:
+            if int(unit.split("_", 1)[1]) == target.index:
+                return relay_id
+        except (ValueError, IndexError):
+            continue
     return None
 
 
