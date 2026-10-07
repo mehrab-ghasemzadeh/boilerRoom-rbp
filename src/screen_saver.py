@@ -34,7 +34,7 @@ def _draw_link(canvas, x, y, connected):
 
 
 class ScreenSaver:
-    TIMEOUT = 60.0
+    TIMEOUT = 120.0
     FADE_STEPS = 4
     FADE_DELAY = 0.03
     REFRESH_INTERVAL = 30.0  # update time/date every 30 seconds
