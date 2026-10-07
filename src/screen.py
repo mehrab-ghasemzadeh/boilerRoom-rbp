@@ -854,6 +854,7 @@ class Screen:
         *,
         index: int = 0,
         legend: tuple[tuple[str, str], ...] | None = None,
+        interval: float = 1.0,
     ) -> int | None:
         """
         Pick one row from a list. Returns its position, or None for back.
@@ -904,7 +905,10 @@ class Screen:
             self._scrollbar(top, BODY_ROWS, total)
             await self.render()
 
-            key = await self._key()
+            try:
+                key = await asyncio.wait_for(self._key(), timeout=interval)
+            except asyncio.TimeoutError:
+                continue
             if key == SCROLL_UP:
                 index = (index - 1) % total
             elif key == SCROLL_DOWN:
@@ -914,7 +918,7 @@ class Screen:
             elif key == CANCEL:
                 return None
 
-    async def page(self, title: str, lines: list[str]) -> None:
+    async def page(self, title: str, lines: list[str], *, interval: float = 1.0) -> None:
         """
         Show a block of text, scrolling a row at a time.
 
@@ -955,7 +959,10 @@ class Screen:
             self._scrollbar(top, BODY_ROWS, total)
             await self.render()
 
-            key = await self._key()
+            try:
+                key = await asyncio.wait_for(self._key(), timeout=interval)
+            except asyncio.TimeoutError:
+                continue
             if key == SCROLL_UP:
                 top = max(0, top - 1)
             elif key == SCROLL_DOWN:
@@ -967,8 +974,8 @@ class Screen:
                     return
                 top = min(limit, top + BODY_ROWS)
 
-    async def message(self, title: str, lines: list[str]) -> None:
-        await self.page(title, lines)
+    async def message(self, title: str, lines: list[str], *, interval: float = 1.0) -> None:
+        await self.page(title, lines, interval=interval)
 
     async def watch(
         self,
@@ -1032,6 +1039,7 @@ class Screen:
         *,
         title: str = "Enter value",
         mask: bool = False,
+        interval: float = 1.0,
     ) -> str:
         """
         Collect an answer, showing it as it is typed.
@@ -1074,7 +1082,10 @@ class Screen:
 
             await self.render()
 
-            key = await self._key()
+            try:
+                key = await asyncio.wait_for(self._key(), timeout=interval)
+            except asyncio.TimeoutError:
+                continue
             if editor.feed(key):
                 return editor.text
 
@@ -1103,6 +1114,7 @@ class Screen:
         *,
         index: int = 0,
         legend: tuple[tuple[str, str], ...] | None = None,
+        interval: float = 1.0,
     ) -> tuple[list[bool], int] | tuple[None, None]:
         """
         Select multiple items with checkboxes.
@@ -1159,7 +1171,10 @@ class Screen:
             self._scrollbar(top, BODY_ROWS, total)
             await self.render()
 
-            key = await self._key()
+            try:
+                key = await asyncio.wait_for(self._key(), timeout=interval)
+            except asyncio.TimeoutError:
+                continue
             if key == SCROLL_UP:
                 index = (index - 1) % total
             elif key == SCROLL_DOWN:
@@ -1178,6 +1193,7 @@ class Screen:
         *,
         index: int = 0,
         legend: tuple[tuple[str, str], ...] | None = None,
+        interval: float = 1.0,
     ) -> int | None:
         """
         Select one item from a list.
@@ -1222,7 +1238,10 @@ class Screen:
             self._scrollbar(top, BODY_ROWS, total)
             await self.render()
 
-            key = await self._key()
+            try:
+                key = await asyncio.wait_for(self._key(), timeout=interval)
+            except asyncio.TimeoutError:
+                continue
             if key == SCROLL_UP:
                 index = (index - 1) % total
             elif key == SCROLL_DOWN:
