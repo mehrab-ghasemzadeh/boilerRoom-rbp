@@ -1,9 +1,8 @@
 import asyncio
 import datetime
 import random
-import time
 
-from display_canvas import Canvas, WIDTH, HEIGHT, text_width
+from display_canvas import Canvas, WIDTH, HEIGHT
 
 LINK_UP = (
     ".......",
@@ -37,7 +36,6 @@ def _draw_link(canvas, x, y, connected):
 
 class ScreenSaver:
     TIMEOUT = 60.0
-    MOVE_INTERVAL = 0.2
     FADE_STEPS = 4
     FADE_DELAY = 0.03
 
@@ -50,7 +48,6 @@ class ScreenSaver:
         self._dy = 1
         self._box_width = 70
         self._box_height = 50
-        self._last_move = 0
 
     def should_activate(self, idle_seconds):
         return not self._active and idle_seconds > self.TIMEOUT
@@ -65,7 +62,6 @@ class ScreenSaver:
         self._y = random.randint(0, max(0, HEIGHT - self._box_height))
         self._dx = random.choice([-1, 1])
         self._dy = random.choice([-1, 1])
-        self._last_move = time.time()
 
         canvas.clear()
         self._draw(canvas, link_fn, warning_fn)
@@ -90,14 +86,9 @@ class ScreenSaver:
         self._active = False
         self._fading = False
 
-    def update(self, canvas, link_fn, warning_fn, now):
+    def update(self, canvas, link_fn, warning_fn):
         if not self._active or self._fading:
             return
-
-        if (now - self._last_move) < self.MOVE_INTERVAL:
-            return
-
-        self._last_move = now
 
         canvas.fill_rect(self._x, self._y, self._box_width, self._box_height, on=False)
         self._x += self._dx

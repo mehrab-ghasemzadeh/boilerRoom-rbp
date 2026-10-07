@@ -657,7 +657,7 @@ class Screen:
         if self._screen_saver.should_activate(now - self._idle_since):
             self._screen_saver.activate(self.canvas, self.link, self.warning)
         elif self._screen_saver.active():
-            self._screen_saver.update(self.canvas, self.link, self.warning, now)
+            self._screen_saver.update(self.canvas, self.link, self.warning)
         await self.display.show(self.canvas)
 
     async def _key(self) -> str:
