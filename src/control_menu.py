@@ -3451,11 +3451,6 @@ async def _start_screen(state: RuntimeState, device) -> Screen | None:
     for line in getattr(display, "describe", list)():
         await state.log(f"[menu] {line}")
 
-    # Before the first frame is drawn, so the splash is already in the saved
-    # language rather than flashing Persian and then changing.
-    await language.load()
-    await state.log(f"[menu] Panel language: {language.get()}")
-
     # Read fresh at every frame rather than sampled once here, so the icon in
     # the title bar follows a reconnect instead of showing whatever the link was
     # doing when the menu came up.
@@ -3799,6 +3794,11 @@ async def run_control_menu(state: RuntimeState) -> None:
 
 async def _run_menu_loop(state: RuntimeState, device) -> None:
     view = screen()
+
+    # Load the saved language preference before drawing anything.
+    # This must happen even without a display so terminal mode also
+    # respects the operator's choice.
+    await language.load()
 
     for line in getattr(device, "describe", list)():
         await state.echo(line)
