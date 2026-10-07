@@ -112,7 +112,7 @@ class ScreenSaver:
             while self._active:
                 self.update(canvas, link_fn, warning_fn)
                 await show_fn(canvas)
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(2.0)
         except asyncio.CancelledError:
             pass
 
