@@ -91,14 +91,20 @@ class ScreenSaver:
             return
 
         canvas.fill_rect(self._x, self._y, self._box_width, self._box_height, on=False)
-        self._x += self._dx
-        self._y += self._dy
-        if self._x <= 0 or self._x + self._box_width >= WIDTH:
+
+        next_x = self._x + self._dx
+        next_y = self._y + self._dy
+
+        if next_x <= 0 or next_x + self._box_width >= WIDTH:
             self._dx = -self._dx
-            self._x = max(0, min(self._x, WIDTH - self._box_width))
-        if self._y <= 0 or self._y + self._box_height >= HEIGHT:
+            next_x = self._x + self._dx
+        if next_y <= 0 or next_y + self._box_height >= HEIGHT:
             self._dy = -self._dy
-            self._y = max(0, min(self._y, HEIGHT - self._box_height))
+            next_y = self._y + self._dy
+
+        self._x = next_x
+        self._y = next_y
+
         self._draw(canvas, link_fn, warning_fn)
 
     async def run(self, canvas, show_fn, link_fn, warning_fn):
