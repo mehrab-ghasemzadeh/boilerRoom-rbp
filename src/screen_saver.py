@@ -1,6 +1,5 @@
 import asyncio
 import datetime
-import random
 
 from display_canvas import Canvas, WIDTH, HEIGHT
 
@@ -38,14 +37,13 @@ class ScreenSaver:
     TIMEOUT = 60.0
     FADE_STEPS = 4
     FADE_DELAY = 0.03
+    REFRESH_INTERVAL = 30.0  # update time/date every 30 seconds
 
     def __init__(self):
         self._active = False
         self._fading = False
         self._x = 0
         self._y = 0
-        self._dx = 1
-        self._dy = 1
         self._box_width = 70
         self._box_height = 50
 
@@ -58,10 +56,8 @@ class ScreenSaver:
         self._active = True
         self._fading = False
 
-        self._x = random.randint(0, max(0, WIDTH - self._box_width))
-        self._y = random.randint(0, max(0, HEIGHT - self._box_height))
-        self._dx = random.choice([-1, 1])
-        self._dy = random.choice([-1, 1])
+        self._x = (WIDTH - self._box_width) // 2
+        self._y = (HEIGHT - self._box_height) // 2
 
         canvas.clear()
         self._draw(canvas, link_fn, warning_fn)
@@ -86,38 +82,18 @@ class ScreenSaver:
         self._active = False
         self._fading = False
 
-    def update(self, canvas, link_fn, warning_fn):
-        if not self._active or self._fading:
-            return
-
-        canvas.fill_rect(self._x, self._y, self._box_width, self._box_height, on=False)
-
-        next_x = self._x + self._dx
-        next_y = self._y + self._dy
-
-        if next_x <= 0 or next_x + self._box_width >= WIDTH:
-            self._dx = -self._dx
-            next_x = self._x + self._dx
-        if next_y <= 0 or next_y + self._box_height >= HEIGHT:
-            self._dy = -self._dy
-            next_y = self._y + self._dy
-
-        self._x = next_x
-        self._y = next_y
-
-        self._draw(canvas, link_fn, warning_fn)
-
-    async def run(self, canvas, show_fn, link_fn, warning_fn):
-        try:
-            while self._active:
-                self.update(canvas, link_fn, warning_fn)
-                await show_fn(canvas)
-                await asyncio.sleep(2.0)
-        except asyncio.CancelledError:
-            pass
-
     def active(self):
         return self._active
+
+    async def run(self, canvas, show_fn, link_fn, warning_fn):
+        """Refresh time/date/indicators periodically without moving the box."""
+        try:
+            while self._active:
+                self._draw(canvas, link_fn, warning_fn)
+                await show_fn(canvas)
+                await asyncio.sleep(self.REFRESH_INTERVAL)
+        except asyncio.CancelledError:
+            pass
 
     def _draw(self, canvas, link_fn, warning_fn):
         padding = 6
@@ -128,12 +104,12 @@ class ScreenSaver:
         time_str = now.strftime("%H:%M")
         date_str = now.strftime("%Y-%m-%d")
 
-        canvas.rect(self._x, self._y, self._box_width, self._box_height, on=True)
+        canvas.fill_rect(self._x, self._y, self._box_width, self._box_height, on=True)
 
-        canvas.text(x, y, time_str, on=True)
+        canvas.text(x, y, time_str, on=False)
 
         y += 13
-        canvas.text(x, y, date_str, on=True)
+        canvas.text(x, y, date_str, on=False)
 
         y += 13
         ix = x
@@ -145,4 +121,4 @@ class ScreenSaver:
         if warning_fn:
             warn = bool(warning_fn())
             if warn:
-                canvas.text(ix, y, "(!)", on=True)
+                canvas.text(ix, y, "(!)", on=False)
