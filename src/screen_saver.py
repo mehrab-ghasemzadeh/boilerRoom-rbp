@@ -44,7 +44,6 @@ class ScreenSaver:
     def __init__(self):
         self._active = False
         self._fading = False
-        self._stale = False
         self._x = 0
         self._y = 0
         self._dx = 1
@@ -52,7 +51,6 @@ class ScreenSaver:
         self._box_width = 70
         self._box_height = 50
         self._last_move = 0
-        self._bg_snapshot = None
 
     def should_activate(self, idle_seconds):
         return not self._active and idle_seconds > self.TIMEOUT
@@ -62,7 +60,6 @@ class ScreenSaver:
             return
         self._active = True
         self._fading = False
-        self._stale = False
 
         self._x = random.randint(0, max(0, WIDTH - self._box_width))
         self._y = random.randint(0, max(0, HEIGHT - self._box_height))
@@ -70,18 +67,12 @@ class ScreenSaver:
         self._dy = random.choice([-1, 1])
         self._last_move = time.time()
 
-        self._save_background(canvas)
+        canvas.clear()
         self._draw(canvas, link_fn, warning_fn)
 
     def deactivate(self):
         self._active = False
         self._fading = False
-        self._stale = False
-        self._bg_snapshot = None
-
-    def mark_stale(self):
-        if self._active:
-            self._stale = True
 
     async def fade_out(self, canvas):
         if not self._active or self._fading:
@@ -98,17 +89,9 @@ class ScreenSaver:
 
         self._active = False
         self._fading = False
-        self._stale = False
-        self._bg_snapshot = None
 
     def update(self, canvas, link_fn, warning_fn, now):
         if not self._active or self._fading:
-            return
-
-        if self._stale:
-            self._stale = False
-            self._save_background(canvas)
-            self._draw(canvas, link_fn, warning_fn)
             return
 
         if (now - self._last_move) < self.MOVE_INTERVAL:
@@ -116,29 +99,19 @@ class ScreenSaver:
 
         self._last_move = now
 
+        canvas.fill_rect(self._x, self._y, self._box_width, self._box_height, on=False)
         self._x += self._dx
         self._y += self._dy
-
         if self._x <= 0 or self._x + self._box_width >= WIDTH:
             self._dx = -self._dx
             self._x = max(0, min(self._x, WIDTH - self._box_width))
         if self._y <= 0 or self._y + self._box_height >= HEIGHT:
             self._dy = -self._dy
             self._y = max(0, min(self._y, HEIGHT - self._box_height))
-
-        self._restore_background(canvas)
-        self._save_background(canvas)
         self._draw(canvas, link_fn, warning_fn)
 
     def active(self):
         return self._active
-
-    def _save_background(self, canvas):
-        self._bg_snapshot = bytes(canvas.buffer)
-
-    def _restore_background(self, canvas):
-        if self._bg_snapshot is not None:
-            canvas.buffer[:] = self._bg_snapshot
 
     def _draw(self, canvas, link_fn, warning_fn):
         padding = 6

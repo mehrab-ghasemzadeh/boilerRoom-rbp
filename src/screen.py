@@ -707,7 +707,7 @@ class Screen:
         turns out to be.
         """
         if self._screen_saver.active():
-            self._screen_saver.mark_stale()
+            self._screen_saver.deactivate()
         canvas = self.canvas
         canvas.clear()
         title = FA_TITLES.get(title, title) if language.is_persian() else title
