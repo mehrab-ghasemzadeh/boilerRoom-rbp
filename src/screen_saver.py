@@ -110,6 +110,9 @@ class ScreenSaver:
         except asyncio.CancelledError:
             pass
 
+    def active(self):
+        return self._active
+
     def _draw(self, canvas, link_fn, warning_fn):
         padding = 6
         x = self._x + padding
