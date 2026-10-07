@@ -35,11 +35,7 @@ SCROLL_NEXT_LEGEND = (SCROLL_KEYS,) + (
 )
 
 # Main menu - no scroll, has Next for entering submenus
-ROOT_LEGEND = (SCROLL_KEYS,) + (
-    # (cap_for(NEXT), _t("enter", "ورود")),
-    (cap_for(ENTER), _t("select", "انتخاب")),
-    (cap_for(CANCEL), _t("status", "وضعیت")),
-)
+ROOT_LEGEND = SCROLL_LEGEND
 
 
 # Relay control - both Enter and Next toggle
@@ -82,10 +78,7 @@ LEGENDS = {
 
     # Temperature settings
     "Temperatures": SCROLL_LEGEND,
-    "Set Temperature": (SCROLL_LEGEND,)+(
-        (cap_for(ENTER), _t("save", "ذخیره")),
-        (cap_for(CANCEL), _t("cancel", "انصراف")),
-    ),
+    "Set Temperature": SCROLL_LEGEND,
 
     # Unit modes
     "Unit Modes": SCROLL_LEGEND,
