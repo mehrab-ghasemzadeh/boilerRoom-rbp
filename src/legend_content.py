@@ -71,6 +71,7 @@ LEGENDS = {
     "Boiler Room Config": SCROLL_LEGEND,
     "Sensor Mapping": SCROLL_LEGEND,
     "App Config": SCROLL_LEGEND,
+    "App configuration": SCROLL_LEGEND,
 
     # Relay control
     "Relay Control": RELAY_LEGEND,
