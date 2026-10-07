@@ -426,6 +426,9 @@ FA_ROWS = {
     "Yes, stop it": "بله، متوقف کن",
     # Temperature setpoint list.
     "Device-wide limit": "حد سراسری دستگاه",
+    # Unit types (for target selection)
+    "boiler": "دیگ",
+    "pump": "پمپ",
     # Reading line labels.
 }
 

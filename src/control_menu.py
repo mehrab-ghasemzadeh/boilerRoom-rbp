@@ -81,7 +81,7 @@ from anti_freeze import choices as antifreeze_choices
 from mapping_provider import DEFAULT_MAPPING_PATH
 from limits_guard import limit_guard
 from runtime_state import RuntimeState
-from screen import BODY_COLUMNS, BODY_ROWS, SCROLL_KEYS, Screen, TEXT_OFFSET, _translate_line
+from screen import BODY_COLUMNS, BODY_ROWS, SCROLL_KEYS, Screen, TEXT_OFFSET, _translate_line, _translate_row
 from schedule_editor import (
     ScheduleEditError,
     add_exception,
@@ -1396,7 +1396,10 @@ async def _select_targets_table(state: RuntimeState, view: Screen) -> list[Targe
         await view.message("No targets", ["No boilers or pumps", "in the device mapping."])
         return None
 
-    items = [f"{str(target):<12} relay {relay_for_target(target)}" for target in targets]
+    items = [
+        f"{_translate_row(target.type)} {target.index:<3} relay {relay_for_target(target)}"
+        for target in targets
+    ]
     selected, _ = await view.select_checkboxes("Select targets", items, legend=get_legend("Default Checkboxes"))
     if selected is None:
         return None
