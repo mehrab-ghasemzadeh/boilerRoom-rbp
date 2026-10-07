@@ -396,7 +396,7 @@ FA_LINES = {
 # the data already in them and pass through untouched.
 FA_ROWS = {
     # Mode choices.
-    "automatic": "خودکار",
+    "automatic": "اتومات",
     "manual": "دستی",
     "ON": "روشن",
     "OFF": "خاموش",
@@ -538,22 +538,22 @@ FA_FRAGMENTS = (
 # and a heating panel that has lost the server has to say so in a way nobody has
 # to squint at.
 LINK_UP = (
-    "..###..",
-    ".#...#.",
-    "#.....#",
-    "..###..",
-    ".#...#.",
-    "..###..",
-    "...#...",
+    ".......",
+    ".......",
+    ".....#.",
+    "...#.#.",
+    ".#.#.#.",
+    ".......",
+    ".......",
 )
 LINK_DOWN = (
-    "..###..",
-    ".#...#.",
-    "#.....#",
-    "..#.#..",
-    ".#...#.",
-    "...##..",
-    "...#...",
+    ".......",
+    ".......",
+    ".....#.",
+    "...#.#.",
+    ".#.#.#.",
+    ".......",
+    ".......",
 )
 LINK_WIDTH = 7
 LINK_HEIGHT = 7

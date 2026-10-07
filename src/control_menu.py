@@ -931,7 +931,7 @@ async def _mode_menu(state: RuntimeState) -> None:
             await view.message(
                 _t("Mode changed", "حالت تغییر کرد"),
                 [
-                    f"{target} -> {_t('automatic', 'خودکار')}",
+                    f"{target} -> {_t('automatic', 'اتومات')}",
                     _t("the schedule now drives it", "زمان‌بندی اکنون آن را هدایت می‌کند")
                     + (
                         f" ({_t('relay', 'رله')} {relay_id} {_on_off(now_on)})"
@@ -1035,7 +1035,7 @@ async def _mode_menu_terminal(state: RuntimeState) -> None:
         relay_id = relay_for_target(target)
         now_on = rc.get_state(relay_id) if rc is not None and relay_id is not None else None
         await state.echo(
-            f"[menu] {target} -> {_t('automatic', 'خودکار')}"
+            f"[menu] {target} -> {_t('automatic', 'اتومات')}"
             f"{_t('; the schedule now drives it', '؛ زمان‌بندی اکنون آن را هدایت می‌کند')}"
             + (
                 f" ({_t('relay', 'رله')} {relay_id} {_on_off(now_on)})"
