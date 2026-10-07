@@ -1,0 +1,38 @@
+┌─ MAIN MENU
+│  ├─ 1) Sensor readings          → _show_last_readings()
+│  ├─ 2) Relay control            → _relay_menu() / _relay_menu_terminal()
+│  │   └─ Select relay → Toggle (Enter/Next)
+│  ├─ 3) Unit modes               → _mode_menu()
+│  │   ├─ Select unit
+│  │   └─ Choose mode: [automatic / manual]
+│  ├─ 4) Temperatures             → _temperature_menu() / _temperature_table()
+│  │   └─ 1) Set boiler temp      → _set_boiler_temperature()
+│  ├─ 5) Change schedule          → _schedule_editor_menu() / _schedule_editor_menu_terminal()
+│  │   ├─ 1) Add weekly rule      → _add_weekly_rule_v2()
+│  │   │   ├─ Select targets (checkboxes)
+│  │   │   ├─ Select days (checkboxes)
+│  │   │   ├─ Start hour (0-23)
+│  │   │   ├─ Start minute (0,15,30,45)
+│  │   │   ├─ End hour (0-23)
+│  │   │   ├─ End minute (0,15,30,45)
+│  │   │   └─ State (ON/OFF)
+│  │   ├─ 2) Remove weekly rule   → _remove_weekly_rule_v2()
+│  │   ├─ 3) Add date exception   → _add_exception_v2()
+│  │   │   ├─ Select targets
+│  │   │   ├─ Select date
+│  │   │   ├─ Start hour/minute
+│  │   │   ├─ End hour/minute
+│  │   │   └─ State (ON/OFF)
+│  │   └─ 4) Remove exception     → _remove_exception_v2()
+|  ├─ 6) app configuration
+│  │   ├─ 1) Active schedule          → _show_schedule()  
+│  │   ├─ 2) App configuration        → _show_app_config()  
+│  │   ├─ 3) Device mapping           → _show_mapping()  
+│  │   └─ 4) Status                   → _show_status()  
+│  ├─ 7) Change language         → _language_menu()
+│  │   ├─ 1) English
+│  │   └─ 2) فارسی
+│  ├─ 8) Anti-freeze             → _antifreeze_menu() (same as 4→4)
+│  ├─ 9) Thermal sensor IDs      → _sensor_ids_menu() / _sensor_ids_menu_terminal()
+│  │   └─ Live list with scroll (2↑/8↓), NEXT to reset cache
+│  └─ 0) Quit                     → _confirm_quit() → shutdown
