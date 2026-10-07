@@ -309,7 +309,9 @@ def parse_schedule(payload: dict[str, Any]) -> Schedule:
         if not isinstance(entry, dict):
             raise ScheduleError(f"{field}: expected an object")
 
-        action = str(entry.get("action", "")).strip().lower()
+        action = str(entry.get("action") or "").strip().lower()
+        if not action:
+            continue
         if action not in EXCEPTION_ACTIONS:
             raise ScheduleError(
                 f"{field}: unknown action {entry.get('action')!r}. "
