@@ -161,13 +161,10 @@ MENU = """
   3) Set unit mode (automatic/manual)
   4) Change temperatures
   5) Change schedule
-  6) Show active schedule
-  7) Show app configuration
-  8) Show device mapping
-  9) Show status
- 10) Change language
- 11) Anti-freeze temperatures
- 12) Thermal sensor IDs
+  6) App configuration
+  7) Change language
+  8) Anti-freeze temperatures
+  9) Thermal sensor IDs
   0) Quit
 > """
 
@@ -203,6 +200,14 @@ LANGUAGE_MENU = """
   0) Back
 > """
 
+APP_CONFIG_MENU = """
+  1) Show active schedule
+  2) Show app configuration
+  3) Show device mapping
+  4) Show status
+  0) Back
+> """
+
 # The same options as the blocks above, as (answer, short label). The terminal
 # reads the block; the display builds a selectable list from these. Labels are
 # written to fit twenty columns, which is what the panel has.
@@ -212,13 +217,10 @@ MAIN_ITEMS = (
     ("3", "Unit modes"),
     ("4", "Temperatures"),
     ("5", "Change schedule"),
-    ("6", "Active schedule"),
-    ("7", "App configuration"),
-    ("8", "Device mapping"),
-    ("9", "Status"),
-    ("10", "Change language"),
-    ("11", "Anti-freeze"),
-    ("12", "Thermal sensor IDs"),
+    ("6", "App configuration"),
+    ("7", "Change language"),
+    ("8", "Anti-freeze"),
+    ("9", "Thermal sensor IDs"),
     ("0", "Quit"),
 )
 
@@ -227,6 +229,14 @@ MAIN_ITEMS = (
 LANGUAGE_ITEMS = (
     ("1", language.name(language.ENGLISH)),
     ("2", language.name(language.PERSIAN)),
+    ("0", "Back"),
+)
+
+APP_CONFIG_ITEMS = (
+    ("1", "Active schedule"),
+    ("2", "App configuration"),
+    ("3", "Device mapping"),
+    ("4", "Status"),
     ("0", "Back"),
 )
 
@@ -283,13 +293,10 @@ FA_MAIN_ITEMS = (
     ("3", "حالت‌ها"),
     ("4", "دماها"),
     ("5", "تغییر زمان‌بندی"),
-    ("6", "زمان‌بندی فعال"),
-    ("7", "پیکربندی"),
-    ("8", "نگاشت دستگاه"),
-    ("9", "وضعیت"),
-    ("10", "زبان"),
-    ("11", "ضدیخ"),
-    ("12", "آیدی سنسور های دما"),
+    ("6", "پیکربندی برنامه"),
+    ("7", "زبان"),
+    ("8", "ضدیخ"),
+    ("9", "آیدی سنسور های دما"),
     ("0", "خروج"),
 )
 
@@ -305,6 +312,14 @@ FA_ANTIFREEZE_ITEMS = (
     ("1", "روشن‌سازی زیر"),
     ("2", "خاموش‌سازی بالای"),
     ("3", "بازگشت به پیش‌فرض"),
+    ("0", "بازگشت"),
+)
+
+FA_APP_CONFIG_ITEMS = (
+    ("1", "زمان‌بندی فعال"),
+    ("2", "پیکربندی"),
+    ("3", "نگاشت دستگاه"),
+    ("4", "وضعیت"),
     ("0", "بازگشت"),
 )
 
@@ -333,6 +348,7 @@ FA_TITLES = {
     "Temperatures": "دماها",
     "Safety limits": "حدود ایمنی",
     "Anti-freeze": "ضدیخ",
+    "App configuration": "پیکربندی برنامه",
 }
 
 FA_LABELS = {
@@ -354,6 +370,7 @@ _FA_ITEMS = {
     "Anti-freeze": FA_ANTIFREEZE_ITEMS,
     "Menu": FA_MAIN_ITEMS,
     "Language": LANGUAGE_ITEMS,
+    "App configuration": FA_APP_CONFIG_ITEMS,
 }
 
 
@@ -899,8 +916,9 @@ async def _mode_menu(state: RuntimeState) -> None:
         modes = await state.get_modes()
         current = modes.get(target, "automatic")
 
-        # Use a simple select for mode choice
-        mode_choices = ["automatic", "manual"]
+        # Use a simple select for mode choice (with translation)
+        mode_values = ["automatic", "manual"]
+        mode_choices = [_t("automatic", "اتومات"), _t("manual", "دستی")]
         mode_index = 0 if current == "automatic" else 1
 
         mode_chosen = await view.select(
@@ -913,7 +931,7 @@ async def _mode_menu(state: RuntimeState) -> None:
         if mode_chosen is None:
             continue  # Back to unit list
 
-        mode = mode_choices[mode_chosen]
+        mode = mode_values[mode_chosen]
 
         if mode == current:
             await view.message("No change", [f"{target} is already {mode}."])
@@ -1007,7 +1025,7 @@ async def _mode_menu_terminal(state: RuntimeState) -> None:
 
     current = modes.get(target, "automatic")
     answer = await _prompt(
-        f"  {target} is {current}. Set to 1) automatic or 2) manual? (empty = back): "
+        f"  {target} is {current}. Set to 1) {_t('automatic', 'اتومات')} or 2) {_t('manual', 'دستی')}? (empty = back): "
     )
     choice = answer.strip().lower()
     if not choice:
@@ -3134,18 +3152,12 @@ async def _handle_choice(state: RuntimeState, choice: str) -> None:
     elif choice == "5":
         await _schedule_editor_menu(state)
     elif choice == "6":
-        await _show_schedule(state)
+        await _app_config_menu(state)
     elif choice == "7":
-        await _show_app_config(state)
-    elif choice == "8":
-        await _show_mapping(state)
-    elif choice == "9":
-        await _show_status(state)
-    elif choice == "10":
         await _language_menu(state)
-    elif choice == "11":
+    elif choice == "8":
         await _antifreeze_menu(state)
-    elif choice == "12":
+    elif choice == "9":
         await _sensor_ids_menu(state)
     elif choice == "0":
         await state.echo("\n[menu] Shutting down ...")
@@ -3346,6 +3358,39 @@ async def _show_status(state: RuntimeState) -> None:
     await view.page("Status", await _status_lines(state))
 
 
+async def _app_config_menu(state: RuntimeState) -> None:
+    """
+    Show app configuration submenu: active schedule, config, mapping, status.
+    """
+    while not state.shutdown.is_set():
+        _set_context("App configuration")
+        try:
+            choice = await _choose(
+                state, "App configuration", APP_CONFIG_ITEMS, APP_CONFIG_MENU
+            )
+        except EOFError:
+            state.shutdown.set()
+            return
+
+        _set_context(_label_for(APP_CONFIG_ITEMS, choice, "App configuration"))
+
+        if choice == "1":
+            await _show_schedule(state)
+        elif choice == "2":
+            await _show_app_config(state)
+        elif choice == "3":
+            await _show_mapping(state)
+        elif choice == "4":
+            await _show_status(state)
+        elif choice in ("0", "", BACK):
+            await state.echo("")
+            return
+        else:
+            await state.echo(f"\n[menu] Unknown option: {choice!r}\n")
+
+        await _flush_page(state)
+
+
 async def _language_menu(state: RuntimeState) -> None:
     """
     Let the operator choose the language the panel speaks.
@@ -3451,11 +3496,6 @@ async def _start_screen(state: RuntimeState, device) -> Screen | None:
     for line in getattr(display, "describe", list)():
         await state.log(f"[menu] {line}")
 
-    # Before the first frame is drawn, so the splash is already in the saved
-    # language rather than flashing Persian and then changing.
-    await language.load()
-    await state.log(f"[menu] Panel language: {language.get()}")
-
     # Read fresh at every frame rather than sampled once here, so the icon in
     # the title bar follows a reconnect instead of showing whatever the link was
     # doing when the menu came up.
@@ -3473,9 +3513,8 @@ async def _stop_screen(state: RuntimeState) -> None:
         return
 
     try:
-        # Leave something true on the glass. A menu frozen where the operator
-        # last left it reads as a working device.
-        await view.splash("Boiler room", ["", "  Agent stopped.", ""])
+        # Clear the display on shutdown so the panel goes blank
+        await view.display.clear()
         await view.display.close()
     except Exception as exc:
         await state.log(f"[menu] Display shutdown: {exc}", level=logging.DEBUG)
@@ -3799,6 +3838,11 @@ async def run_control_menu(state: RuntimeState) -> None:
 
 async def _run_menu_loop(state: RuntimeState, device) -> None:
     view = screen()
+
+    # Load the saved language preference before drawing anything.
+    # This must happen even without a display so terminal mode also
+    # respects the operator's choice.
+    await language.load()
 
     for line in getattr(device, "describe", list)():
         await state.echo(line)

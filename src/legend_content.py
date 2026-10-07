@@ -71,6 +71,7 @@ LEGENDS = {
     "Boiler Room Config": SCROLL_LEGEND,
     "Sensor Mapping": SCROLL_LEGEND,
     "App Config": SCROLL_LEGEND,
+    "App configuration": SCROLL_LEGEND,
 
     # Relay control
     "Relay Control": RELAY_LEGEND,
@@ -88,10 +89,7 @@ LEGENDS = {
 
     # Unit modes
     "Unit Modes": SCROLL_LEGEND,
-    "Mode Options": (SCROLL_LEGEND,)+(
-        (cap_for(ENTER), _t("select", "انتخاب")),
-        (cap_for(CANCEL), _t("back", "بازگشت")),
-    ),
+    "Mode Options": SCROLL_LEGEND,
 
     # Schedules
     "Schedule Editor": SCROLL_NEXT_LEGEND,

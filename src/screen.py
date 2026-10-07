@@ -540,19 +540,19 @@ FA_FRAGMENTS = (
 LINK_UP = (
     ".......",
     ".......",
-    ".....#.",
-    "...#.#.",
-    ".#.#.#.",
-    ".......",
+    "......#",
+    "....#.#",
+    "..#.#.#",
+    "#.#.#.#",
     ".......",
 )
 LINK_DOWN = (
     ".......",
     ".......",
-    ".....#.",
-    "...#.#.",
-    ".#.#.#.",
-    ".......",
+    "......#",
+    "....#.#",
+    "..#.#.#",
+    "#.#.#.#",
     ".......",
 )
 LINK_WIDTH = 7
@@ -641,7 +641,7 @@ class Screen:
         # reassuring blank.
         self.link = link
 
-        # Whether there is a gas warning (any sensor > 2000). Asked fresh at
+        # Whether there is a gas warning (any sensor > 400). Asked fresh at
         # every frame so the indicator updates immediately.
         self.warning = warning
 
@@ -693,7 +693,7 @@ class Screen:
         Clear the canvas and draw the title bar and legend strip.
 
         The bar carries the page title, the connection icon (only when connected),
-        the warning indicator (! when any gas sensor > 2000), and the time.
+        the warning indicator (! when any gas sensor > 400), and the time.
         They are placed from opposite ends of the bar and the title is cut to
         whatever room is left, so no two can ever overlap however long the title
         turns out to be.
