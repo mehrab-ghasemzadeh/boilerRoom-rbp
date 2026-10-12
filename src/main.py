@@ -29,6 +29,7 @@ from device_record import (
     load_cached_device_record,
 )
 from anti_freeze import anti_freeze
+from alarm_guard import alarm_guard
 from errors_client import error_reporter
 from limits_guard import limit_guard
 from logging_setup import configure_logging, shutdown_logging
@@ -93,6 +94,11 @@ SCHEDULE_TICK_SECONDS = 20
 # change when an installer edits them, which is rare, and nothing pushes the
 # change — so poll, but gently.
 DEVICE_RECORD_REFRESH_SECONDS = 900
+
+# How often to force a full server reconciliation (WebSocket reconnect + record
+# poll + config/schedule version settle). Covers the case where the WebSocket
+# stays up but the server pushed changes that weren't delivered.
+FULL_SYNC_INTERVAL_SECONDS = 1800
 
 # Login retry backoff, used when the server is unreachable at boot
 AUTH_RETRY_DELAY_SECONDS = 10
@@ -201,6 +207,9 @@ async def _sensor_cycle(
     # Anti-freeze after the limit guard, so a unit cut for running hot is
     # already blocked by the time this looks at it — the cut outranks it.
     await anti_freeze.check(state, temperatures)
+
+    # Alarm guard after anti-freeze: checks gas, over-temp margin, and 0°C
+    await alarm_guard.check(state, temperatures, gas)
 
     # Pacing lives in RuntimeState because a local relay change also
     # posts telemetry; both have to share one "last posted" clock or
@@ -567,6 +576,25 @@ async def device_record_loop(state: RuntimeState) -> None:
                     waiter.cancel()
 
 
+async def full_sync_loop(state: RuntimeState) -> None:
+    """
+    Periodically force a full reconciliation with the server.
+
+    This triggers a WebSocket reconnect (if connected) which runs the full
+    reconciliation: device record fetch, config/schedule version settle,
+    local changes publish, relay state assert. Runs less often than the
+    device record poll to avoid unnecessary reconnections.
+    """
+    while not state.shutdown.is_set():
+        state.ws_reconnect_requested.set()
+        await state.log("[sync] Requested periodic full reconciliation")
+
+        try:
+            await asyncio.wait_for(state.shutdown.wait(), timeout=FULL_SYNC_INTERVAL_SECONDS)
+        except asyncio.TimeoutError:
+            pass
+
+
 async def restore_cached_modes(state: RuntimeState) -> None:
     """
     Reload which units were left in manual.
@@ -881,6 +909,7 @@ async def main() -> None:
             "websocket_client": run_websocket_client,
             "schedule_loop": schedule_loop,
             "device_record": device_record_loop,
+            "full_sync": full_sync_loop,
             "state_publisher": run_state_publisher,
             "sensor_watcher": sensor_watcher.run,
         },

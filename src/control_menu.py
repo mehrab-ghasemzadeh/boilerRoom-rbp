@@ -647,7 +647,8 @@ async def _relay_menu(state: RuntimeState) -> None:
             on = rc.get_state(rid)
             state_str = "ON " if on else "OFF"
             cut = f"  [CUT: {blocked_relays[rid]}]" if rid in blocked_relays else ""
-            rows.append(f"{cfg['name']:<16} {state_str}{cut}")
+            alarm_note = "  [ALARM]" if rid == 1 else ""
+            rows.append(f"{cfg['name']:<16} {state_str}{cut}{alarm_note}")
         return rows
 
     # Legend for the relay table: both Enter and Next toggle the relay
@@ -712,8 +713,9 @@ async def _relay_menu_terminal(state: RuntimeState) -> None:
             if rid in blocked_relays
             else ""
         )
+        alarm_note = f"  [{_t('ALARM', 'آларم')}]" if rid == 1 else ""
         await state.echo(
-            f"  {_t('Relay', 'رله')} {rid}: {cfg['name']} — {_on_off(on)}{note}"
+            f"  {_t('Relay', 'رله')} {rid}: {cfg['name']} — {_on_off(on)}{note}{alarm_note}"
         )
 
     raw = await _prompt(
