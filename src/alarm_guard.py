@@ -31,8 +31,9 @@ _log = get_logger("alarm")
 ALARM_RELAY_ID = 1
 
 # Gas sensor thresholds (can be overridden via environment)
-MQ2_THRESHOLD = int(os.environ.get("BOILERROOM_MQ2_THRESHOLD", "400"))
-MQ9_THRESHOLD = int(os.environ.get("BOILERROOM_MQ9_THRESHOLD", "400"))
+# Warning shows icon at GAS_WARNING_THRESHOLD (500), alarm activates at GAS_ALARM_THRESHOLD (900)
+GAS_WARNING_THRESHOLD = int(os.environ.get("BOILERROOM_GAS_WARNING_THRESHOLD", "500"))
+GAS_ALARM_THRESHOLD = int(os.environ.get("BOILERROOM_GAS_ALARM_THRESHOLD", "900"))
 
 # How many degrees above the cut limit triggers the alarm
 ALARM_OVER_TEMP_MARGIN_C = float(os.environ.get("BOILERROOM_ALARM_OVER_TEMP_MARGIN", "5.0"))
@@ -97,22 +98,22 @@ class AlarmGuard:
         if self._user_activated:
             return
 
-        # 2. Check gas sensors
+        # Check gas sensors for alarm (relay activation)
         mq2_value = gas.get("mq2")
         mq9_value = gas.get("mq9")
 
         gas_alarm = False
         gas_reason = ""
 
-        if mq2_value is not None and mq2_value >= MQ2_THRESHOLD:
+        if mq2_value is not None and mq2_value >= GAS_ALARM_THRESHOLD:
             gas_alarm = True
-            gas_reason = f"MQ2 gas sensor reading {mq2_value} >= threshold {MQ2_THRESHOLD}"
+            gas_reason = f"MQ2 gas sensor reading {mq2_value} >= alarm threshold {GAS_ALARM_THRESHOLD}"
 
-        if mq9_value is not None and mq9_value >= MQ9_THRESHOLD:
+        if mq9_value is not None and mq9_value >= GAS_ALARM_THRESHOLD:
             gas_alarm = True
             if gas_reason:
                 gas_reason += f"; "
-            gas_reason += f"MQ9 gas sensor reading {mq9_value} >= threshold {MQ9_THRESHOLD}"
+            gas_reason += f"MQ9 gas sensor reading {mq9_value} >= alarm threshold {GAS_ALARM_THRESHOLD}"
 
         if gas_alarm:
             await self._activate(state, relay_controller, gas_reason)
@@ -217,8 +218,8 @@ class AlarmGuard:
         # Check gas
         mq2_value = gas.get("mq2")
         mq9_value = gas.get("mq9")
-        if (mq2_value is not None and mq2_value >= MQ2_THRESHOLD) or \
-           (mq9_value is not None and mq9_value >= MQ9_THRESHOLD):
+        if (mq2_value is not None and mq2_value >= GAS_ALARM_THRESHOLD) or \
+           (mq9_value is not None and mq9_value >= GAS_ALARM_THRESHOLD):
             return  # Gas still alarming
 
         # Check over-temp
