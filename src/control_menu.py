@@ -208,6 +208,9 @@ APP_CONFIG_MENU = """
   0) Back
 > """
 
+# Environment variable to control whether quit option is shown in menu
+ALLOW_QUIT = os.environ.get("BOILERROOM_ALLOW_QUIT", "").lower() in ("true", "1", "on", "yes")
+
 # The same options as the blocks above, as (answer, short label). The terminal
 # reads the block; the display builds a selectable list from these. Labels are
 # written to fit twenty columns, which is what the panel has.
@@ -221,8 +224,9 @@ MAIN_ITEMS = (
     ("7", "Change language"),
     ("8", "Anti-freeze"),
     ("9", "Thermal sensor IDs"),
-    ("0", "Quit"),
 )
+if ALLOW_QUIT:
+    MAIN_ITEMS = MAIN_ITEMS + (("0", "Quit"),)
 
 # Identical to MAIN_ITEMS on purpose: a language's name is written in that
 # language, so translating the rows would only ever change one of the two.
@@ -297,8 +301,9 @@ FA_MAIN_ITEMS = (
     ("7", "زبان"),
     ("8", "ضدیخ"),
     ("9", "آیدی سنسور های دما"),
-    ("0", "خروج"),
 )
+if ALLOW_QUIT:
+    FA_MAIN_ITEMS = FA_MAIN_ITEMS + (("0", "خروج"),)
 
 FA_TEMPERATURE_ITEMS = (
     ("1", "تنظیم دمای دیگ"),
